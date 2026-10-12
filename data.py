@@ -30,20 +30,24 @@ def real(path):
 
 
 def board(path):
-    """Доска направления: счёт по статусам, задачи в работе, решения (новые первыми), время последней правки."""
+    """Доска направления: счёт по статусам, задачи в работе, сделанные и решения (новые первыми), время последней правки."""
     import json
     meta = {}
     try:
         meta = json.loads(read(os.path.join(path, "direction.json")) or "{}")
     except ValueError:
         pass
-    counts, doing, last = {s: 0 for s in STATUSES}, [], 0
+    counts, doing, done, last = {s: 0 for s in STATUSES}, [], [], 0
     for f in glob.glob(os.path.join(path, "backlog", "tasks", "*.md")):
         text = read(f)
         st = field(text, "status") or "To Do"
         counts[st if st in counts else "To Do"] += 1
         if st == "In Progress":
             doing.append((field(text, "ordinal") or "", field(text, "title") or os.path.basename(f)))
+        elif st == "Done":
+            done.append({"title": field(text, "title") or os.path.basename(f),
+                         "date": field(text, "updated_date") or field(text, "created_date") or "",
+                         "ordinal": float(field(text, "ordinal") or 0)})
         last = max(last, os.path.getmtime(f))
     decisions = []
     for f in glob.glob(os.path.join(path, "backlog", "decisions", "*.md")):
@@ -51,8 +55,9 @@ def board(path):
         decisions.append({"title": field(text, "title") or os.path.basename(f), "date": field(text, "date") or ""})
         last = max(last, os.path.getmtime(f))
     decisions.sort(key=lambda d: d["date"], reverse=True)
+    done = [{"title": d["title"], "date": d["date"]} for d in sorted(done, key=lambda d: (d["date"], d["ordinal"]), reverse=True)]
     return {"repo": real(meta.get("repo")), "created": meta.get("created"), "counts": counts,
-            "doing": [t for _, t in sorted(doing)][:3], "decisions": decisions[:5], "decisions_total": len(decisions),
+            "doing": [t for _, t in sorted(doing)][:3], "done": done[:8], "decisions": decisions[:5], "decisions_total": len(decisions),
             "changed": last or None}
 
 

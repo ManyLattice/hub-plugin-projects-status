@@ -196,6 +196,11 @@ function card(p) {
   if (p.board.doing.length) {
     const ul = el("ul"); for (const d of p.board.doing.slice(0, 2)) ul.append(el("li", null, d)); c.append(ul);
   }
+  if (p.board.done.length) {
+    const ul = el("ul", "did"), last = p.board.done[0];
+    ul.append(el("li", null, `сделано ${day(last.date)}: ${short(last.title)}`));
+    c.append(ul);
+  }
   const ft = el("div", "ft");
   ft.append(el("span", "dirn", p.direction), el("span", "ps-sp"));
   if (p.wait) ft.append(el("span", "wtag", "ждёт вас"), " · ");
@@ -232,7 +237,7 @@ function cardView(snap, p) {
   grid.append(memoryBox(snap, p, m, ls));
   const side = el("div", "wb");
   side.style.gap = "16px";
-  side.append(boardBox(snap, p), historyBox(m), linksBox(snap, p));
+  side.append(boardBox(snap, p), doneBox(p, m), historyBox(m), linksBox(snap, p));
   grid.append(side);
   box.append(grid);
   return box;
@@ -329,6 +334,24 @@ function boardBox(snap, p) {
   });
   e.append(b);
   box.append(e);
+  return box;
+}
+
+const day = (date) => (date || "").slice(5, 10).split("-").reverse().join(".");
+const short = (t) => t.replace(/\s*\(§[^)]*\)\s*$/, "");
+
+function doneBox(p, m) {
+  const box = el("div", "box"), h = el("h3", null, "Сделано");
+  const tasks = (p.board && p.board.done) || [], ticked = tasks.length ? [] : (m.next || []).filter((x) => x.done);
+  const total = p.board ? p.board.counts.Done : 0;
+  if (total) h.append(el("span", "ps-sp"), el("span", "src", `${total} из ${total + p.board.counts["In Progress"] + p.board.counts["To Do"]} задач бэклога`));
+  box.append(h);
+  if (!tasks.length && !ticked.length) { box.append(el("div", "hint", "Закрытых задач и отмеченных пунктов пока нет")); return box; }
+  const ul = el("ul", "dec");
+  for (const d of tasks) { const li = el("li"); li.append(el("span", "d", day(d.date)), el("span", null, short(d.title))); ul.append(li); }
+  if (total > tasks.length) { const li = el("li"); li.append(el("span"), el("span", "more", `ещё ${total - tasks.length} в бэклоге направления`)); ul.append(li); }
+  for (const x of ticked) { const li = el("li"); li.append(el("span", "d", "✓"), el("span", null, x.text)); ul.append(li); }
+  box.append(ul);
   return box;
 }
 

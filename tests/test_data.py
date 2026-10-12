@@ -10,9 +10,9 @@ import main  # noqa: E402
 import memory  # noqa: E402
 
 
-def task(path, n, status, title):
+def task(path, n, status, title, updated=""):
     with open(os.path.join(path, f"task-{n} - x.md"), "w") as f:
-        f.write(f"---\nid: TASK-{n}\ntitle: '{title}'\nstatus: {status}\nordinal: {n}000\n---\n")
+        f.write(f"---\nid: TASK-{n}\ntitle: '{title}'\nstatus: {status}\nupdated_date: '{updated}'\nordinal: {n}000\n---\n")
 
 
 class Data(unittest.TestCase):
@@ -39,6 +39,14 @@ class Data(unittest.TestCase):
         self.assertEqual(app["board"]["doing"], ["Срез 2: иконка"])
         self.assertEqual(app["board"]["decisions"][0]["title"], "Макеты - в Figma")
         self.assertEqual((idea["direction"], idea["exists"]), (None, False))
+
+    def test_done_tasks_come_newest_first_with_the_date_they_closed(self):
+        t = os.path.join(self.root, "state", "directions", "app-redesign", "backlog", "tasks")
+        task(t, 4, "Done", "Срез 4: оплата", "2026-10-11 09:30")
+        task(t, 5, "Done", "Срез 5: виджет", "2026-10-12 14:05")
+        b = data.board(os.path.join(self.root, "state", "directions", "app-redesign"))
+        self.assertEqual([(d["title"], d["date"]) for d in b["done"]],
+                         [("Срез 5: виджет", "2026-10-12 14:05"), ("Срез 4: оплата", "2026-10-11 09:30"), ("Срез 1", "")])
 
     def test_a_long_yaml_title_is_read_whole(self):
         self.assertEqual(data.field("title: >-\n  Разбор: почему бот\n  выходит из канала\nstatus: To Do\n", "title"),
