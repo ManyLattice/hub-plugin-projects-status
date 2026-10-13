@@ -4,6 +4,10 @@
   pmem.py set <проект> [--stage Разработка] [--note "<пояснение этапа>"] [--goal "<цель>"]
                        [--add "<пункт>"]… [--done "<пункт или его начало>"]… [--undone "<пункт>"]…
                        [--questions "<открытые вопросы>"]
+  pmem.py task list <проект>       задачи проекта по статусам (бэклог направления или свой бэклог проекта)
+  pmem.py task new <проект> "<название>" [-d "<описание>"] [--type story|task|bug] [--priority high|medium|low]
+                       [--to <сессия>|owner] [--due ГГГГ-ММ-ДД]
+  pmem.py task status <проект> <TASK-N> "To Do"|"In Progress"|Done
 Этапы: Кандидат, Разработка, К релизу, В сторе, Пауза, Готово. Правка уходит постом в канал плагина от имени сессии
 (`hub post projects-status`), в истории карточки - с автором."""
 import argparse
@@ -16,6 +20,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import memory  # noqa: E402
+import tasks  # noqa: E402
 
 
 def hub_code():
@@ -63,6 +68,43 @@ def show(name):
         print(f"{n:22} {m.get('stage') or '-':11} {m.get('note') or ''}")
 
 
+def send(text):
+    if len(text) > memory.LIMIT:
+        sys.exit(f"правка длиннее {memory.LIMIT} знаков - сократи")
+    r = subprocess.run(["hub", "post", "projects-status", text], capture_output=True, text=True)
+    print((r.stdout + r.stderr).strip() or "принято")
+    sys.exit(r.returncode)
+
+
+def task(a):
+    state = state_dir()
+    known = projects(state)
+    if a.project not in known:
+        sys.exit(f"нет проекта {a.project} (hub projects)")
+    if a.op == "list":
+        import data
+        home = data.task_homes(state, {k: v for k, v in known.items() if v})[a.project]
+        items = tasks.read_all(home)
+        print(f"{a.project}: {home}")
+        for st, name in tasks.STATUSES.items():
+            mine = sorted((t for t in items if t["status"] == st), key=lambda t: t["ordinal"])
+            print(f"\n{name} ({len(mine)})")
+            for t in mine:
+                extra = ", ".join(x for x in (t["priority"], t["assignee"] and "@" + t["assignee"], t["due"] and "до " + t["due"]) if x)
+                print(f"  {t['id']:9} {t['title']}" + (f"  [{extra}]" if extra else ""))
+        return
+    op = {"task": "create", "project": a.project, "title": " ".join(a.rest)} if a.op == "new" else \
+        {"task": "status", "project": a.project, "id": (a.rest or [""])[0], "status": " ".join(a.rest[1:])}
+    for k, v in (("description", a.d), ("type", a.type), ("priority", a.priority), ("assignee", a.to), ("due", a.due)):
+        if v and a.op == "new":
+            op[k] = v
+    try:
+        tasks.parse(op)
+    except tasks.Invalid as e:
+        sys.exit(f"не принято: {e}")
+    send(json.dumps(op, ensure_ascii=False))
+
+
 def set_(a):
     upd = {"project": a.project}
     for k in ("stage", "note", "goal", "questions"):
@@ -77,11 +119,7 @@ def set_(a):
         memory.parse(text, projects(state))
     except memory.Invalid as e:
         sys.exit(f"не принято: {e}")
-    if len(text) > memory.LIMIT:
-        sys.exit(f"правка длиннее {memory.LIMIT} знаков - разбей на несколько")
-    r = subprocess.run(["hub", "post", "projects-status", text], capture_output=True, text=True)
-    print((r.stdout + r.stderr).strip() or "принято")
-    sys.exit(r.returncode)
+    send(text)
 
 
 def main():
@@ -98,8 +136,17 @@ def main():
     s.add_argument("--add", action="append")
     s.add_argument("--done", action="append")
     s.add_argument("--undone", action="append")
+    s = sub.add_parser("task")
+    s.add_argument("op", choices=["list", "new", "status"])
+    s.add_argument("project")
+    s.add_argument("rest", nargs="*")
+    s.add_argument("-d")
+    s.add_argument("--type", choices=tasks.TYPES)
+    s.add_argument("--priority", choices=tasks.PRIORITIES)
+    s.add_argument("--to")
+    s.add_argument("--due")
     a = p.parse_args()
-    show(a.project) if a.cmd == "show" else set_(a)
+    {"show": lambda: show(a.project), "set": lambda: set_(a), "task": lambda: task(a)}[a.cmd]()
 
 
 if __name__ == "__main__":
