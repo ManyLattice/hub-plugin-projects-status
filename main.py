@@ -10,6 +10,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import data  # noqa: E402
 import memory  # noqa: E402
+import tasks  # noqa: E402
 
 PLUGIN = "projects-status"
 WEB_PORT = int(os.environ.get("HUB_WEB_PORT", "8787"))
@@ -45,8 +46,8 @@ def save(st, touched, cfg):
             f.write(text)
 
 
-def fold(st, posts, known):
-    """Новые посты канала (номер больше уже свёрнутого) -> память; плохой пост - в refused с причиной."""
+def fold(st, posts, known, homes=None):
+    """Новые посты канала (номер больше уже свёрнутого) -> память и задачи; плохой пост - в refused с причиной."""
     touched = set()
     for p in posts:
         n = int(p["id"][1:])
@@ -54,14 +55,35 @@ def fold(st, posts, known):
             continue
         st["last"] = n
         try:
+            op = json.loads(p["text"])
+            if isinstance(op, dict) and "task" in op:
+                if op.get("project") not in known:
+                    raise tasks.Invalid(f"нет проекта {op.get('project')!r} (hub projects)")
+                what = task(tasks.parse(op), homes[op["project"]])
+                mem = st["projects"].setdefault(op["project"], memory.empty())
+                mem["history"].append({"ts": p["ts"], "by": p["by"], "what": what})
+                del mem["history"][:-50]
+                touched.add(op["project"])
+                continue
             upd = memory.parse(p["text"], known)
-        except memory.Invalid as e:
-            st["refused"] = (st.get("refused") or [])[-19:] + [{"id": p["id"], "by": p["by"], "why": str(e), "ts": p["ts"]}]
+        except (ValueError, OSError) as e:
+            why = "не JSON" if type(e) is json.JSONDecodeError else str(e)
+            st["refused"] = (st.get("refused") or [])[-19:] + [{"id": p["id"], "by": p["by"], "why": why, "ts": p["ts"]}]
             continue
         mem = st["projects"].setdefault(upd["project"], memory.empty())
         if memory.apply(mem, upd, p["by"], p["ts"]):
             touched.add(upd["project"])
     return touched
+
+
+def task(op, base):
+    """Правка задачи -> строка истории карточки."""
+    if op["task"] == "create":
+        tid = tasks.create(base, op)
+        who = memory.who(op.get("assignee")) if op.get("assignee") else ""
+        return f"задача {tid} «{op['title'][:80]}» заведена" + (f", исполнитель - {who}" if who else "")
+    tasks.set_status(base, op["id"], op["status"])
+    return f"задача {op['id']}: {tasks.STATUSES[op['status']]}"
 
 
 def follow(st):
@@ -72,9 +94,11 @@ def follow(st):
             tail.poll()
             posts = (tail.reader.state.get("feeds") or {}).get(PLUGIN) or []
             cfg = projects()
-            known = data.known(STATE, cfg)
+            fresh = [p for p in posts if int(p["id"][1:]) > st["last"]]
+            known = data.known(STATE, cfg) if fresh else set()
+            homes = data.task_homes(STATE, cfg) if fresh else {}
             with lock:
-                touched = fold(st, posts, known)
+                touched = fold(st, fresh, known, homes)
                 if touched or not os.path.exists(os.path.join(HOME, "memory.json")):
                     save(st, touched, cfg)
         except Exception as e:  # noqa: BLE001 - журнал на ротации, настройки на записи: попробуем снова
@@ -93,7 +117,7 @@ def handler(st):
             with lock:
                 mems = json.loads(json.dumps(st["projects"]))
                 refused = list(st.get("refused") or [])
-            body = json.dumps({**data.collect(STATE, projects(), mems), "refused": refused[-5:], "at": time.time()},
+            body = json.dumps({**data.collect(STATE, projects(), mems), "refused": refused[-5:], "at": time.time(), "plugin": HERE},
                               ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")

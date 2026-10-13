@@ -3,6 +3,8 @@ import glob
 import os
 import re
 
+import tasks
+
 STATUSES = ("Done", "In Progress", "To Do")
 
 
@@ -93,7 +95,21 @@ def collect(state_dir, projects, memories):
         if slug not in linked and not d["archived"] and slug not in projects:
             out.append({"name": slug, "about": "", "path": d["repo"], "exists": bool(d["repo"] and os.path.isdir(d["repo"])),
                         "direction": slug, "board": d, "memory": memories.get(slug), "unlisted": True})
+    homes = task_homes(state_dir, projects, out)
+    for o in out:
+        o["tasks"] = tasks.read_all(homes[o["name"]])
+        o["tasks_home"] = o["direction"] if o["board"] and not o["board"]["archived"] else None
     return {"projects": out}
+
+
+def task_homes(state_dir, projects, listed=None):
+    """Куда идут задачи проекта: бэклог живого направления, без него - свой бэклог рядом с памятью проекта."""
+    out = {}
+    for p in listed if listed is not None else collect(state_dir, projects, {})["projects"]:
+        live = p["board"] and not p["board"]["archived"]
+        out[p["name"]] = (os.path.join(state_dir, "directions", p["direction"], "backlog") if live else
+                          os.path.join(state_dir, "projects-memory", p["name"], "backlog"))
+    return out
 
 
 def known(state_dir, projects):
