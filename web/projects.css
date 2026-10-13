@@ -148,3 +148,25 @@
 .pst .empty-dir .btn-s { justify-self: start; }
 .pst .wi .t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .pst .card ul.did li::before { content: "✓ "; color: var(--success); }
+/* задачи */
+.pst .kb { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.pst .col { background: var(--muted); border-radius: var(--radius-lg); padding: 10px; display: grid; gap: 8px; align-content: start; min-height: 160px; }
+.pst .col.over { outline: 2px dashed var(--primary); outline-offset: -2px; }
+.pst .col h4 { margin: 0 2px 2px; font-size: var(--text-xs); font-weight: 600; color: var(--muted-foreground); display: flex; gap: 6px; }
+.pst .tk { background: var(--background); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 10px; display: grid; gap: 6px;
+  font-size: var(--text-sm); cursor: grab; }
+.pst .tk:hover { border-color: var(--input); }
+.pst .tk.drag { opacity: .5; }
+.pst .tk.me { border-left: 3px solid var(--warning); }
+.pst .tk .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: var(--text-xs); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.pst .tk .who { margin-left: auto; font-family: var(--font-mono); }
+.pst .tk .desc { font-size: var(--text-xs); color: var(--muted-foreground); white-space: pre-wrap; line-height: 1.45; }
+.pst .pr-h, .pst .late { color: var(--destructive); }
+.pst .pr-m { color: var(--warning); }
+.pst .acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pst .nf { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.pst .nf .full { grid-column: 1 / -1; }
+.pst .nf select { width: 100%; box-sizing: border-box; border: 1px solid var(--input); border-radius: var(--radius); padding: 7px 8px;
+  background: var(--background); color: var(--foreground); font: inherit; font-size: var(--text-sm); }
+.pst .wi .c.late { color: var(--destructive); }
+@media (max-width: 760px) { .pst .kb, .pst .nf { grid-template-columns: minmax(0, 1fr); } }

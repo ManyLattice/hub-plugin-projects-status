@@ -9,6 +9,8 @@ const KIND = { "Разработка": "work", "К релизу": "rel", "В с�
 const FILTERS = [["all", "Все"], ["dir", "С направлением"], ["wait", "Ждут вас"], ["nodir", "Без направления"]];
 
 let data = null, error = "", timer = null, filter = "all", open = null, editing = null, saving = false;
+let tab = "mem", draft = null, expanded = null;   // вкладка карточки, форма новой задачи, раскрытая задача
+const busy = () => editing || draft;
 let rootRef = null;
 
 const port = () => Number(location.port || 80) + 12;
@@ -60,12 +62,13 @@ function waiting(snap, p) {
 
 // --- разбор по группам -------------------------------------------------------------------------------------------
 function groups(snap) {
-  const out = { wait: [], go: [], done: [], rest: [] };
+  const out = { wait: [], go: [], done: [], rest: [], mine: [] };
   for (const p of data.projects) {
     const stage = (p.memory || {}).stage;
     const live = p.board && !p.board.archived;
     p.wait = live ? waiting(snap, p) : null;
     if (p.wait) out.wait.push(p);
+    for (const t of p.tasks || []) if (t.assignee === "owner" && t.status !== "Done") out.mine.push([p, t]);
     if (live && stage !== "Готово") out.go.push(p);
     else if (p.board || stage === "Готово") out.done.push(p);
     else out.rest.push(p);
@@ -73,6 +76,7 @@ function groups(snap) {
   const changed = (p) => Math.max((p.board || {}).changed || 0, (p.memory || {}).updated || 0);
   out.go.sort((a, b) => (!!b.wait - !!a.wait) || ((a.memory || {}).stage === "Пауза") - ((b.memory || {}).stage === "Пауза") || changed(b) - changed(a));
   out.done.sort((a, b) => changed(b) - changed(a));
+  out.mine.sort(([, a], [, b]) => (a.due || "9") < (b.due || "9") ? -1 : (a.due || "9") > (b.due || "9") ? 1 : 0);
   return out;
 }
 
@@ -94,7 +98,7 @@ function bar(b) {
   return [box, cnt];
 }
 const goSession = (name) => { location.hash = `#/s/${encodeURIComponent(name)}`; };
-const openCard = (p) => { open = p.name; editing = null; draw(rootRef, hub.snapshot()); rootRef.scrollTop = 0; };
+const openCard = (p, to = "mem") => { open = p.name; editing = draft = expanded = null; tab = to; draw(rootRef, hub.snapshot()); rootRef.scrollTop = 0; };
 const title = (p) => {
   const m = /^([^:]+):/.exec(p.about || "");
   return m && m[1].length <= 30 ? m[1].trim() : p.name;
@@ -112,11 +116,12 @@ function listView(snap) {
   h.append(el("h1", null, "Статус проектов"));
   const sum = el("div", "sum");
   const b = (n, cls) => { const x = el("b", cls, String(n)); return x; };
-  sum.append(b(g.go.length), " в работе · ", b(g.wait.length, g.wait.length ? "w" : null), g.wait.length ? el("span", "w", " ждут вас") : " ждут вас",
+  const nw = g.wait.length + g.mine.length;
+  sum.append(b(g.go.length), " в работе · ", b(nw, nw ? "w" : null), nw ? el("span", "w", " ждут вас") : " ждут вас",
     ` · ${data.projects.filter((p) => p.board && !p.board.archived).length} направлений · ${g.rest.length} без направления · обновлено ${ago(data.at)}`);
   h.append(sum);
   const chips = el("div", "chips");
-  const counts = { all: data.projects.length, dir: g.go.length + g.done.filter((p) => p.board).length, wait: g.wait.length, nodir: g.rest.length };
+  const counts = { all: data.projects.length, dir: g.go.length + g.done.filter((p) => p.board).length, wait: g.wait.length + g.mine.length, nodir: g.rest.length };
   for (const [k, t] of FILTERS) {
     const c = el("button", "chip", t); c.type = "button"; c.setAttribute("aria-pressed", String(filter === k));
     c.append(el("span", "n", String(counts[k])));
@@ -128,8 +133,17 @@ function listView(snap) {
   if (error) box.append(el("p", "err", error));
   const show = (k) => filter === "all" || filter === k;
 
-  if (g.wait.length && (show("wait") || show("dir"))) {
+  if ((g.wait.length || g.mine.length) && (show("wait") || show("dir"))) {
     const w = el("div", "wb");
+    for (const [p, t] of g.mine) {
+      const row = el("div", "wi mine"), nm = el("div", "p", title(p));
+      nm.append(el("span", "dirn", t.id));
+      const btn = el("button", "btn-s", "Готово"); btn.type = "button";
+      btn.addEventListener("click", (e) => { e.stopPropagation(); setStatus(p, t, "Done"); });
+      row.append(el("span", "dot"), nm, el("div", "t", t.title), el("div", "c" + (overdue(t) ? " late" : ""), t.due ? `до ${dmy(t.due)}` : "ваша задача"), btn);
+      row.addEventListener("click", () => openCard(p, "tasks"));
+      w.append(row);
+    }
     for (const p of g.wait) {
       const row = el("div", "wi"), nm = el("div", "p", title(p));
       nm.append(el("span", "dirn", p.direction));
@@ -138,7 +152,7 @@ function listView(snap) {
       row.append(el("span", "dot"), nm, el("div", "t", p.wait.text), el("div", "c", ago(p.wait.since)), btn);
       w.append(row);
     }
-    box.append(sec("Ждёт вас", g.wait.length), w);
+    box.append(sec("Ждёт вас", g.wait.length + g.mine.length), w);
   }
   if (g.go.length && show("dir")) {
     const cards = el("div", "cards");
@@ -232,6 +246,16 @@ function cardView(snap, p) {
     head.append(o);
   }
   box.append(head);
+
+  const open_ = (p.tasks || []).filter((t) => t.status !== "Done").length, tabs = el("div", "chips");
+  for (const [k, t, n] of [["mem", "Память", null], ["tasks", "Задачи", open_]]) {
+    const c = el("button", "chip", t); c.type = "button"; c.setAttribute("aria-pressed", String(tab === k));
+    if (n) c.append(el("span", "n", String(n)));
+    c.addEventListener("click", () => { tab = k; editing = draft = null; draw(rootRef, snap); });
+    tabs.append(c);
+  }
+  box.append(tabs);
+  if (tab === "tasks") { box.append(...tasksView(snap, p, ls)); return box; }
 
   const grid = el("div", "pc-grid");
   grid.append(memoryBox(snap, p, m, ls));
@@ -342,9 +366,12 @@ const short = (t) => t.replace(/\s*\(§[^)]*\)\s*$/, "");
 
 function doneBox(p, m) {
   const box = el("div", "box"), h = el("h3", null, "Сделано");
-  const tasks = (p.board && p.board.done) || [], ticked = tasks.length ? [] : (m.next || []).filter((x) => x.done);
-  const total = p.board ? p.board.counts.Done : 0;
-  if (total) h.append(el("span", "ps-sp"), el("span", "src", `${total} из ${total + p.board.counts["In Progress"] + p.board.counts["To Do"]} задач бэклога`));
+  const own = p.tasks_home ? [] : (p.tasks || []).filter((t) => t.status === "Done").map((t) => ({ title: t.title, date: t.updated || t.created || "" }));
+  const tasks = [...own, ...((p.board && p.board.done) || [])].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 8);
+  const ticked = tasks.length ? [] : (m.next || []).filter((x) => x.done);
+  const total = (p.board ? p.board.counts.Done : 0) + own.length;
+  const rest = p.board ? p.board.counts["In Progress"] + p.board.counts["To Do"] : (p.tasks || []).length - own.length;
+  if (total) h.append(el("span", "ps-sp"), el("span", "src", `${total} из ${total + rest} задач бэклога`));
   box.append(h);
   if (!tasks.length && !ticked.length) { box.append(el("div", "hint", "Закрытых задач и отмеченных пунктов пока нет")); return box; }
   const ul = el("ul", "dec");
@@ -382,6 +409,142 @@ function linksBox(snap, p) {
   }
   box.append(l);
   return box;
+}
+
+// --- задачи ----------------------------------------------------------------------------------------------------------
+const COLS = [["To Do", "К работе"], ["In Progress", "В работе"], ["Done", "Готово"]];
+const PRIO = { high: "высокий", medium: "средний", low: "низкий" };
+const TYPES = [["story", "Story"], ["task", "Task"], ["bug", "Bug"]];
+const dmy = (d) => (d || "").slice(0, 10).split("-").reverse().join(".").replace(/\.\d{4}$/, "");
+const overdue = (t) => t.due && t.status !== "Done" && t.due < new Date().toISOString().slice(0, 10);
+const mate = (a) => (a === "owner" ? "вы" : a || "");
+
+function setStatus(p, t, status) {
+  if (t.status === status) return;
+  t.status = status; t.updated = new Date().toISOString().slice(0, 16).replace("T", " ");
+  draw(rootRef, hub.snapshot());
+  post(hub.snapshot(), { task: "status", project: p.name, id: t.id, status });
+}
+
+function tasksView(snap, p, ls) {
+  const where = p.tasks_home ? `бэклог направления ${p.tasks_home}` : "свой бэклог проекта";
+  const out = [];
+  if (draft) out.push(taskForm(snap, p, ls, where));
+  const box = el("div", "box"), h = el("h3", null, "Доска");
+  h.append(el("span", "ps-sp"), el("span", "src", `${where} · перетащите карточку, чтобы сменить статус`));
+  if (!draft) {
+    const add = el("button", "btn-s pr", "Новая задача"); add.type = "button";
+    add.addEventListener("click", () => {
+      draft = { title: "", description: "", type: "task", priority: "medium", assignee: ls.length ? ls[0].name : "", due: "" };
+      draw(rootRef, snap); rootRef.querySelector(".nf input")?.focus();
+    });
+    h.append(add);
+  }
+  box.append(h);
+  const kb = el("div", "kb"), all = p.tasks || [];
+  for (const [st, name] of COLS) {
+    let list = all.filter((t) => t.status === st || (st === "To Do" && !COLS.some(([k]) => k === t.status)));
+    list = st === "Done" ? list.sort((a, b) => ((b.updated || b.created || "") > (a.updated || a.created || "") ? 1 : -1))
+      : list.sort((a, b) => (Object.keys(PRIO).indexOf(a.priority || "medium") - Object.keys(PRIO).indexOf(b.priority || "medium")) || a.ordinal - b.ordinal);
+    const col = el("div", "col"), hd = el("h4", null, name);
+    hd.append(el("span", null, String(list.length)));
+    col.append(hd);
+    col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("over"); });
+    col.addEventListener("dragleave", () => col.classList.remove("over"));
+    col.addEventListener("drop", (e) => {
+      e.preventDefault(); col.classList.remove("over");
+      const t = all.find((x) => x.id === e.dataTransfer.getData("text/plain"));
+      if (t) setStatus(p, t, st);
+    });
+    const shown = st === "Done" ? list.slice(0, 8) : list;
+    for (const t of shown) col.append(taskCard(p, t));
+    if (list.length > shown.length) col.append(el("div", "hint", `ещё ${list.length - shown.length}`));
+    kb.append(col);
+  }
+  box.append(kb);
+  if (!all.length) box.append(el("div", "hint", "Задач пока нет: заведите первую кнопкой «Новая задача»"));
+  out.push(box);
+  return out;
+}
+
+function taskCard(p, t) {
+  const c = el("div", "tk" + (expanded === t.id ? " open" : "") + (t.assignee === "owner" ? " me" : ""));
+  c.draggable = true;
+  c.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", t.id); c.classList.add("drag"); });
+  c.addEventListener("dragend", () => c.classList.remove("drag"));
+  c.addEventListener("click", () => { expanded = expanded === t.id ? null : t.id; draw(rootRef, hub.snapshot()); });
+  c.append(el("div", "tt", t.title));
+  const row = el("div", "row");
+  row.append(el("span", null, t.id));
+  if (t.type && t.type !== "task") row.append(el("span", null, (TYPES.find(([k]) => k === t.type) || [, t.type])[1]));
+  if (t.priority && t.status !== "Done") row.append(el("span", `pr-${t.priority[0]}`, `● ${PRIO[t.priority] || t.priority}`));
+  if (t.status === "Done") row.append(el("span", null, dmy(t.updated || t.created)));
+  else if (t.due) row.append(el("span", overdue(t) ? "late" : null, `до ${dmy(t.due)}`));
+  if (t.assignee) row.append(el("span", "who", mate(t.assignee)));
+  c.append(row);
+  if (expanded === t.id) {
+    if (t.description) c.append(el("div", "desc", t.description));
+    const act = el("div", "acts");
+    for (const [st, name] of COLS) {
+      if (st === t.status) continue;
+      const b = el("button", "btn-s", name); b.type = "button";
+      b.addEventListener("click", (e) => { e.stopPropagation(); setStatus(p, t, st); });
+      act.append(b);
+    }
+    c.append(act);
+  }
+  return c;
+}
+
+function taskForm(snap, p, ls, where) {
+  const box = el("div", "box"), h = el("h3", null, "Новая задача");
+  h.append(el("span", "ps-sp"), el("span", "src", `уйдёт в ${where}`));
+  box.append(h);
+  const fld = (k, v, cls) => { const f = el("div", "fld" + (cls ? ` ${cls}` : "")); f.append(el("div", "k", k), v); return f; };
+  const bind = (x, k) => { x.value = draft[k]; x.addEventListener("input", () => { draft[k] = x.value; });
+    x.addEventListener("keydown", (e) => { if (e.key === "Escape") { draft = null; draw(rootRef, snap); } }); return x; };
+  const select = (k, opts) => { const s = el("select"); for (const [v, t] of opts) { const o = el("option", null, t); o.value = v; s.append(o); }
+    s.addEventListener("change", () => { draft[k] = s.value; draw(rootRef, snap); }); s.value = draft[k]; return s; };
+  const nm = bind(el("input"), "title"); nm.placeholder = "Что сделать";
+  const ds = bind(el("textarea"), "description"); ds.rows = 3; ds.placeholder = "Подробности и критерии приёмки";
+  const due = bind(el("input"), "due"); due.type = "date";
+  const people = (snap.sessions || []).filter((s) => s.state !== "removed" && s.kind !== "hub").map((s) => s.name).sort();
+  const nf = el("div", "nf");
+  nf.append(fld("Название", nm, "full"), fld("Описание", ds, "full"),
+    fld("Тип", select("type", TYPES)), fld("Приоритет", select("priority", Object.entries(PRIO))),
+    fld("Исполнитель", select("assignee", [["", "без исполнителя"], ["owner", "вы"], ...people.map((n) => [n, n])])), fld("Срок", due));
+  box.append(nf);
+  const foot = el("div", "acts");
+  const mk = (t, cls, send) => { const b = el("button", cls, t); b.type = "button"; b.disabled = saving;
+    b.addEventListener("click", () => createTask(p, send)); return b; };
+  foot.append(mk(saving ? "Создаю…" : "Создать", "btn-s pr", false));
+  if (draft.assignee && draft.assignee !== "owner") foot.append(mk("Создать и отдать исполнителю", "btn-s", true));
+  const cancel = el("button", "btn-s", "Отмена"); cancel.type = "button";
+  cancel.addEventListener("click", () => { draft = null; draw(rootRef, snap); });
+  foot.append(cancel);
+  foot.append(el("span", "hint", draft.assignee === "owner" ? "ваша задача появится в «Ждёт вас» на главной плагина"
+    : draft.assignee ? "«отдать» - исполнитель получит задачу сообщением от вас" : ""));
+  box.append(foot);
+  return box;
+}
+
+async function createTask(p, send) {
+  const d = draft, op = { task: "create", project: p.name, title: d.title.trim() };
+  if (!op.title) { error = "У задачи нет названия"; draw(rootRef, hub.snapshot()); return; }
+  for (const k of ["description", "type", "priority", "assignee", "due"]) if (d[k].trim()) op[k] = d[k].trim();
+  if (JSON.stringify(op).length > 2000) { error = "Задача длиннее 2000 знаков: сократите описание"; draw(rootRef, hub.snapshot()); return; }
+  saving = true; error = ""; draw(rootRef, hub.snapshot());
+  await post(hub.snapshot(), op);
+  if (send) {
+    const lines = [`Задача по проекту ${p.name}: «${op.title}»`];
+    if (op.description) lines.push(op.description);
+    lines.push([op.priority && `приоритет ${PRIO[op.priority]}`, op.due && `срок ${dmy(op.due)}`].filter(Boolean).join(", "));
+    lines.push(`Заведена в ${p.tasks_home ? `бэклог направления ${p.tasks_home}` : "бэклог проекта"}. Номер и статус: python3 ${data.plugin}/pmem.py task list ${p.name}; ` +
+      `сменить статус: python3 ${data.plugin}/pmem.py task status ${p.name} <TASK-N> "In Progress" (потом Done).`);
+    await hub.post("/api/send", { session: d.assignee, text: lines.filter(Boolean).join("\n") });
+  }
+  saving = false; draft = null;
+  draw(rootRef, hub.snapshot());
 }
 
 // --- правка ----------------------------------------------------------------------------------------------------------
@@ -424,8 +587,8 @@ export default function register(h) {
   hub.addStyle("web/projects.css");
   hub.addView({
     id: PLUGIN, title: "Статус проектов", subtitle: "этап, бэклог и память проектов", icon: "board",
-    render(root, snap) { rootRef = root; if (!editing) draw(root, snap); },
-    show(root) { rootRef = root; load(); timer = setInterval(() => { if (!editing) load(); }, 15000); },
+    render(root, snap) { rootRef = root; if (!busy()) draw(root, snap); },
+    show(root) { rootRef = root; load(); timer = setInterval(() => { if (!busy()) load(); }, 15000); },
     hide() { clearInterval(timer); timer = null; },
   });
 }
