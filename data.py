@@ -99,12 +99,12 @@ def collect(state_dir, projects, memories):
     for o in out:
         o["tasks"] = tasks.read_all(homes[o["name"]])
         o["tasks_home"] = o["direction"] if o["board"] and not o["board"]["archived"] else None
-    return {"projects": out}
+    return {"projects": out, "general": tasks.read_all(homes[tasks.GENERAL])}
 
 
 def task_homes(state_dir, projects, listed=None):
     """Куда идут задачи проекта: бэклог живого направления, без него - свой бэклог рядом с памятью проекта."""
-    out = {}
+    out = {tasks.GENERAL: os.path.join(state_dir, "projects-memory", "_general", "backlog")}
     for p in listed if listed is not None else collect(state_dir, projects, {})["projects"]:
         live = p["board"] and not p["board"]["archived"]
         out[p["name"]] = (os.path.join(state_dir, "directions", p["direction"], "backlog") if live else

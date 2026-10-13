@@ -4,7 +4,8 @@
   pmem.py set <проект> [--stage Разработка] [--note "<пояснение этапа>"] [--goal "<цель>"]
                        [--add "<пункт>"]… [--done "<пункт или его начало>"]… [--undone "<пункт>"]…
                        [--questions "<открытые вопросы>"]
-  pmem.py task list <проект>       задачи проекта по статусам (бэклог направления или свой бэклог проекта)
+  pmem.py task list <проект>       задачи проекта по статусам (бэклог направления или свой бэклог проекта);
+                                   проект «-» - задачи без проекта (общий бэклог владельца)
   pmem.py task new <проект> "<название>" [-d "<описание>"] [--type story|task|bug] [--priority high|medium|low]
                        [--to <сессия>|owner] [--due ГГГГ-ММ-ДД]
   pmem.py task status <проект> <TASK-N> "To Do"|"In Progress"|Done
@@ -79,13 +80,13 @@ def send(text):
 def task(a):
     state = state_dir()
     known = projects(state)
-    if a.project not in known:
+    if a.project != tasks.GENERAL and a.project not in known:
         sys.exit(f"нет проекта {a.project} (hub projects)")
     if a.op == "list":
         import data
         home = data.task_homes(state, {k: v for k, v in known.items() if v})[a.project]
         items = tasks.read_all(home)
-        print(f"{a.project}: {home}")
+        print(f"{'без проекта' if a.project == tasks.GENERAL else a.project}: {home}")
         for st, name in tasks.STATUSES.items():
             mine = sorted((t for t in items if t["status"] == st), key=lambda t: t["ordinal"])
             print(f"\n{name} ({len(mine)})")

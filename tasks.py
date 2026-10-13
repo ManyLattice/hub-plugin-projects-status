@@ -1,6 +1,6 @@
 """Задачи проекта - файлы Backlog.md (`backlog/tasks/task-N - <заголовок>.md`): их читают утилита backlog, доска
 направления и `hub direction <slug> task …`. У проекта с живым направлением это бэклог направления, без него - свой
-бэклог проекта рядом с его памятью.
+бэклог проекта рядом с его памятью. Задачи без проекта (project "-") - в общем бэклоге владельца.
 
 Правка - пост в канал плагина, как правка памяти: {"task": "create", "project", "title", ["description", "type",
 "priority", "assignee", "due"]} или {"task": "status", "project", "id", "status"}."""
@@ -9,6 +9,7 @@ import glob
 import os
 import re
 
+GENERAL = "-"
 STATUSES = {"To Do": "К работе", "In Progress": "В работе", "Done": "Готово"}
 PRIORITIES = ("high", "medium", "low")
 TYPES = ("story", "task", "bug")

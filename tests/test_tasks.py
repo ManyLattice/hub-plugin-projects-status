@@ -79,6 +79,20 @@ class Fold(unittest.TestCase):
         self.assertEqual(main.fold(st, [post(3, "owner", task="status", project="where", id="TASK-1", status="Done")],
                                    set(self.cfg), homes), set())                     # уже свёрнуто
 
+    def test_a_task_without_a_project_goes_to_the_general_backlog(self):
+        st = {"last": 0, "projects": {}, "refused": []}
+        homes = data.task_homes(self.state, self.cfg)
+        touched = main.fold(st, [post(1, "owner", task="create", project=tasks.GENERAL, title="Зарегистрироваться в сервисе",
+                                      assignee="owner"),
+                                 post(2, "owner", task="status", project=tasks.GENERAL, id="TASK-1", status="In Progress")],
+                            set(self.cfg), homes)
+        self.assertEqual(touched, {tasks.GENERAL})
+        self.assertEqual(st["projects"], {})
+        self.assertEqual([h["what"] for h in st["general"]],
+                         ["задача TASK-1 «Зарегистрироваться в сервисе» заведена, исполнитель - владелец", "задача TASK-1: В работе"])
+        [t] = data.collect(self.state, self.cfg, {})["general"]
+        self.assertEqual((t["title"], t["status"], t["assignee"]), ("Зарегистрироваться в сервисе", "In Progress", "owner"))
+
     def test_a_status_for_a_missing_task_is_refused_with_the_reason(self):
         st = {"last": 0, "projects": {}, "refused": []}
         main.fold(st, [post(1, "kotlin-dev", task="status", project="app", id="TASK-4", status="Done")],

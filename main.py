@@ -40,7 +40,7 @@ def save(st, touched, cfg):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(st, f, ensure_ascii=False, indent=1)
     os.replace(tmp, os.path.join(HOME, "memory.json"))
-    for name in touched:
+    for name in touched - {tasks.GENERAL}:
         text = memory.render_md(name, (cfg.get(name) or {}).get("about"), st["projects"][name]).replace("{plugin}", HERE)
         with open(os.path.join(HOME, f"{name}.md"), "w", encoding="utf-8") as f:
             f.write(text)
@@ -57,13 +57,15 @@ def fold(st, posts, known, homes=None):
         try:
             op = json.loads(p["text"])
             if isinstance(op, dict) and "task" in op:
-                if op.get("project") not in known:
-                    raise tasks.Invalid(f"нет проекта {op.get('project')!r} (hub projects)")
-                what = task(tasks.parse(op), homes[op["project"]])
-                mem = st["projects"].setdefault(op["project"], memory.empty())
-                mem["history"].append({"ts": p["ts"], "by": p["by"], "what": what})
-                del mem["history"][:-50]
-                touched.add(op["project"])
+                name = op.get("project")
+                if name != tasks.GENERAL and name not in known:
+                    raise tasks.Invalid(f"нет проекта {name!r} (hub projects)")
+                what = task(tasks.parse(op), homes[name])
+                log = st.setdefault("general", []) if name == tasks.GENERAL else \
+                    st["projects"].setdefault(name, memory.empty())["history"]
+                log.append({"ts": p["ts"], "by": p["by"], "what": what})
+                del log[:-50]
+                touched.add(name)
                 continue
             upd = memory.parse(p["text"], known)
         except (ValueError, OSError) as e:
