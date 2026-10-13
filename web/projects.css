@@ -3,6 +3,7 @@
 .pst .ps-head { display: grid; gap: 12px; }
 .pst .ps-head h1 { margin: 0; font-size: var(--text-xl); font-weight: 650; letter-spacing: -.01em; }
 .pst .ps-head .sum { color: var(--muted-foreground); font-size: var(--text-sm); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.pst .ps-top { display: flex; align-items: flex-start; gap: 12px; }
 .pst .ps-head .sum b { color: var(--foreground); font-weight: 600; }
 .pst .ps-head .sum .w { color: var(--warning); }
 .pst .ps-sp { flex: 1; }
@@ -166,7 +167,8 @@
 .pst .acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .pst .nf { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .pst .nf .full { grid-column: 1 / -1; }
+.pst .nf .wide { grid-column: span 3; }
 .pst .nf select { width: 100%; box-sizing: border-box; border: 1px solid var(--input); border-radius: var(--radius); padding: 7px 8px;
   background: var(--background); color: var(--foreground); font: inherit; font-size: var(--text-sm); }
 .pst .wi .c.late { color: var(--destructive); }
-@media (max-width: 760px) { .pst .kb, .pst .nf { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .pst .kb, .pst .nf { grid-template-columns: minmax(0, 1fr); } .pst .nf .wide { grid-column: auto; } }

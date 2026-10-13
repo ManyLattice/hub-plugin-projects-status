@@ -112,7 +112,7 @@ function sec(text, n, ...more) {
 // --- список ----------------------------------------------------------------------------------------------------------
 function listView(snap) {
   const g = groups(snap), box = el("div", "ps");
-  const head = el("div", "ps-head"), h = el("div");
+  const head = el("div", "ps-head"), top = el("div", "ps-top"), h = el("div");
   h.append(el("h1", null, "Статус проектов"));
   const sum = el("div", "sum");
   const b = (n, cls) => { const x = el("b", cls, String(n)); return x; };
@@ -120,6 +120,10 @@ function listView(snap) {
   sum.append(b(g.go.length), " в работе · ", b(nw, nw ? "w" : null), nw ? el("span", "w", " ждут вас") : " ждут вас",
     ` · ${data.projects.filter((p) => p.board && !p.board.archived).length} направлений · ${g.rest.length} без направления · обновлено ${ago(data.at)}`);
   h.append(sum);
+  const add = el("button", "btn-s pr", "Новая задача"); add.type = "button";
+  add.addEventListener("click", () => { draft = newDraft(snap, null); draw(rootRef, snap); rootRef.querySelector(".nf input")?.focus(); });
+  top.append(h, el("span", "ps-sp"));
+  if (!draft) top.append(add);
   const chips = el("div", "chips");
   const counts = { all: data.projects.length, dir: g.go.length + g.done.filter((p) => p.board).length, wait: g.wait.length + g.mine.length, nodir: g.rest.length };
   for (const [k, t] of FILTERS) {
@@ -128,9 +132,10 @@ function listView(snap) {
     c.addEventListener("click", () => { filter = k; draw(rootRef, snap); });
     chips.append(c);
   }
-  head.append(h, chips);
+  head.append(top, chips);
   box.append(head);
   if (error) box.append(el("p", "err", error));
+  if (draft) box.append(taskForm(snap, true));
   const show = (k) => filter === "all" || filter === k;
 
   if ((g.wait.length || g.mine.length) && (show("wait") || show("dir"))) {
@@ -255,7 +260,7 @@ function cardView(snap, p) {
     tabs.append(c);
   }
   box.append(tabs);
-  if (tab === "tasks") { box.append(...tasksView(snap, p, ls)); return box; }
+  if (tab === "tasks") { box.append(...tasksView(snap, p)); return box; }
 
   const grid = el("div", "pc-grid");
   grid.append(memoryBox(snap, p, m, ls));
@@ -426,16 +431,22 @@ function setStatus(p, t, status) {
   post(hub.snapshot(), { task: "status", project: p.name, id: t.id, status });
 }
 
-function tasksView(snap, p, ls) {
-  const where = p.tasks_home ? `бэклог направления ${p.tasks_home}` : "свой бэклог проекта";
+const home = (p) => (p.tasks_home ? `бэклог направления ${p.tasks_home}` : "свой бэклог проекта");
+const newDraft = (snap, p) => {
+  const ls = p ? leads(snap, p) : [];
+  return { project: p ? p.name : "", title: "", description: "", type: "task", priority: "medium",
+    assignee: ls.length ? ls[0].name : p ? "" : "owner", due: "" };
+};
+
+function tasksView(snap, p) {
   const out = [];
-  if (draft) out.push(taskForm(snap, p, ls, where));
+  if (draft) out.push(taskForm(snap, false));
   const box = el("div", "box"), h = el("h3", null, "Доска");
-  h.append(el("span", "ps-sp"), el("span", "src", `${where} · перетащите карточку, чтобы сменить статус`));
+  h.append(el("span", "ps-sp"), el("span", "src", `${home(p)} · перетащите карточку, чтобы сменить статус`));
   if (!draft) {
     const add = el("button", "btn-s pr", "Новая задача"); add.type = "button";
     add.addEventListener("click", () => {
-      draft = { title: "", description: "", type: "task", priority: "medium", assignee: ls.length ? ls[0].name : "", due: "" };
+      draft = newDraft(snap, p);
       draw(rootRef, snap); rootRef.querySelector(".nf input")?.focus();
     });
     h.append(add);
@@ -496,9 +507,10 @@ function taskCard(p, t) {
   return c;
 }
 
-function taskForm(snap, p, ls, where) {
+function taskForm(snap, pick) {
+  const p = data.projects.find((x) => x.name === draft.project);
   const box = el("div", "box"), h = el("h3", null, "Новая задача");
-  h.append(el("span", "ps-sp"), el("span", "src", `уйдёт в ${where}`));
+  h.append(el("span", "ps-sp"), el("span", "src", p ? `уйдёт в ${home(p)}` : "выберите проект"));
   box.append(h);
   const fld = (k, v, cls) => { const f = el("div", "fld" + (cls ? ` ${cls}` : "")); f.append(el("div", "k", k), v); return f; };
   const bind = (x, k) => { x.value = draft[k]; x.addEventListener("input", () => { draft[k] = x.value; });
@@ -510,17 +522,21 @@ function taskForm(snap, p, ls, where) {
   const due = bind(el("input"), "due"); due.type = "date";
   const people = (snap.sessions || []).filter((s) => s.state !== "removed" && s.kind !== "hub").map((s) => s.name).sort();
   const nf = el("div", "nf");
-  nf.append(fld("Название", nm, "full"), fld("Описание", ds, "full"),
+  const live = (x) => !!(x.board && !x.board.archived);
+  const all = [...data.projects].sort((a, b) => live(b) - live(a) || title(a).localeCompare(title(b), "ru"));
+  if (pick) nf.append(fld("Проект", select("project", [["", "выберите проект"], ...all.map((x) => [x.name, title(x)])])), fld("Название", nm, "wide"));
+  else nf.append(fld("Название", nm, "full"));
+  nf.append(fld("Описание", ds, "full"),
     fld("Тип", select("type", TYPES)), fld("Приоритет", select("priority", Object.entries(PRIO))),
     fld("Исполнитель", select("assignee", [["", "без исполнителя"], ["owner", "вы"], ...people.map((n) => [n, n])])), fld("Срок", due));
   box.append(nf);
   const foot = el("div", "acts");
   const mk = (t, cls, send) => { const b = el("button", cls, t); b.type = "button"; b.disabled = saving;
-    b.addEventListener("click", () => createTask(p, send)); return b; };
+    b.addEventListener("click", () => createTask(send)); return b; };
   foot.append(mk(saving ? "Создаю…" : "Создать", "btn-s pr", false));
   if (draft.assignee && draft.assignee !== "owner") foot.append(mk("Создать и отдать исполнителю", "btn-s", true));
   const cancel = el("button", "btn-s", "Отмена"); cancel.type = "button";
-  cancel.addEventListener("click", () => { draft = null; draw(rootRef, snap); });
+  cancel.addEventListener("click", () => { draft = null; error = ""; draw(rootRef, snap); });
   foot.append(cancel);
   foot.append(el("span", "hint", draft.assignee === "owner" ? "ваша задача появится в «Ждёт вас» на главной плагина"
     : draft.assignee ? "«отдать» - исполнитель получит задачу сообщением от вас" : ""));
@@ -528,8 +544,10 @@ function taskForm(snap, p, ls, where) {
   return box;
 }
 
-async function createTask(p, send) {
-  const d = draft, op = { task: "create", project: p.name, title: d.title.trim() };
+async function createTask(send) {
+  const d = draft, p = data.projects.find((x) => x.name === d.project);
+  if (!p) { error = "Выберите проект"; draw(rootRef, hub.snapshot()); return; }
+  const op = { task: "create", project: p.name, title: d.title.trim() };
   if (!op.title) { error = "У задачи нет названия"; draw(rootRef, hub.snapshot()); return; }
   for (const k of ["description", "type", "priority", "assignee", "due"]) if (d[k].trim()) op[k] = d[k].trim();
   if (JSON.stringify(op).length > 2000) { error = "Задача длиннее 2000 знаков: сократите описание"; draw(rootRef, hub.snapshot()); return; }
@@ -543,8 +561,8 @@ async function createTask(p, send) {
       `сменить статус: python3 ${data.plugin}/pmem.py task status ${p.name} <TASK-N> "In Progress" (потом Done).`);
     await hub.post("/api/send", { session: d.assignee, text: lines.filter(Boolean).join("\n") });
   }
-  saving = false; draft = null;
-  draw(rootRef, hub.snapshot());
+  saving = false;
+  if (open === p.name) { draft = null; draw(rootRef, hub.snapshot()); } else openCard(p, "tasks");
 }
 
 // --- правка ----------------------------------------------------------------------------------------------------------
