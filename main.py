@@ -10,6 +10,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import data  # noqa: E402
 import memory  # noqa: E402
+import repo  # noqa: E402
 import tasks  # noqa: E402
 
 PLUGIN = "projects-status"
@@ -19,6 +20,7 @@ STATE = os.environ.get("HUB_STATE_DIR") or os.path.expanduser("~/.hub-core")
 HOME = os.path.join(STATE, "projects-memory")   # memory.json и <проект>.md - читают сессии
 HERE = os.path.dirname(os.path.abspath(__file__))
 lock = threading.Lock()
+REPOS = repo.Repos()
 
 
 def projects():
@@ -114,6 +116,19 @@ def follow(st):
         time.sleep(2)
 
 
+def watch_repos(st):
+    """Состояние репо проектов в кэш: страница читает его, а не git на каждый запрос."""
+    while True:
+        try:
+            with lock:
+                mems = json.loads(json.dumps(st["projects"]))
+            got = data.collect(STATE, projects(), mems)["projects"]
+            REPOS.refresh([r for p in got for r in p["roots"]])
+        except Exception as e:  # noqa: BLE001 - настройки на записи, репо переезжает: попробуем снова
+            print(f"{PLUGIN}: репо: {e!r}", flush=True)
+        time.sleep(15)
+
+
 def handler(st):
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -125,7 +140,7 @@ def handler(st):
             with lock:
                 mems = json.loads(json.dumps(st["projects"]))
                 refused = list(st.get("refused") or [])
-            body = json.dumps({**data.collect(STATE, projects(), mems), "refused": refused[-5:], "at": time.time(), "plugin": HERE},
+            body = json.dumps({**data.collect(STATE, projects(), mems, REPOS.get), "refused": refused[-5:], "at": time.time(), "plugin": HERE},
                               ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -142,6 +157,7 @@ def handler(st):
 def main():
     st = load()
     threading.Thread(target=follow, args=(st,), daemon=True).start()
+    threading.Thread(target=watch_repos, args=(st,), daemon=True).start()
     print(f"{PLUGIN}: страница - 127.0.0.1:{PORT}, память - {HOME}", flush=True)
     http.server.ThreadingHTTPServer(("127.0.0.1", PORT), handler(st)).serve_forever()
 

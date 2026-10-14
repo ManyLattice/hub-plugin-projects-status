@@ -3,6 +3,7 @@ import glob
 import os
 import re
 
+import repo as repos_
 import tasks
 
 STATUSES = ("Done", "In Progress", "To Do")
@@ -103,9 +104,10 @@ def owners(dirs, projects, memories):
     return out
 
 
-def collect(state_dir, projects, memories):
+def collect(state_dir, projects, memories, repos=None):
     """-> {projects: [...]} для страницы. Направление - проекта, чью папку оно правит (direction.json repo), или
-    привязанное к проекту вручную; живое направление без проекта - само проект."""
+    привязанное к проекту вручную; живое направление без проекта - само проект. repos(корень) - состояние репо из
+    кэша процесса (repo.Repos.get); корни репо проекта - в roots."""
     dirs = directions(os.path.join(state_dir, "directions"))
     owner = owners(dirs, projects, memories)
     out = []
@@ -127,6 +129,10 @@ def collect(state_dir, projects, memories):
                         "memory": memories.get(slug), "unlisted": True})
     homes = task_homes(state_dir, projects, out)
     for o in out:
+        o["roots"] = list(dict.fromkeys(r for path in [o["path"]] + [d["board"]["repo"] for d in o["directions"]
+                                                                     if not d["board"]["archived"]]
+                                        for r in repos_.roots(path)))
+        o["repos"] = [x for x in map(repos, o["roots"]) if x] if repos else []
         h = homes[o["name"]]
         o["tasks"] = [{**t, "home": key or None} for key, path in h["paths"].items() for t in tasks.read_all(path)]
         o["tasks_home"] = h["default"] or None
