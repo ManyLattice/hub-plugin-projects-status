@@ -15,6 +15,7 @@ let sent = null;
 const typing = () => [...inputs.values()].some((b) => b.node.contains(document.activeElement));
 const busy = () => editing || draft || typing();
 let rootRef = null;
+const chosen = new Map(), answered = new Map(), why = new Set(), own = new Set();   // ответы на карточки по request_id
 
 const port = () => Number(location.port || 80) + 12;
 async function load() {
@@ -43,6 +44,42 @@ function ago(ts) {
 }
 const at = (ts) => new Date(ts * 1000).toLocaleString("ru", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(",", "");
 const who = (by) => (by === "owner" ? "владелец" : by || "-");
+const dur = (ts) => { const m = Math.max(1, Math.round((Date.now() / 1000 - (ts || 0)) / 60)); return m < 60 ? `${m} мин` : `${Math.round(m / 60)} ч`; };
+const when = (date) => (date ? Date.parse(date.replace(" ", "T")) / 1000 || 0 : 0);
+
+// --- ссылки в тексте: адреса и ключи Jira (адрес и проекты - из настроек хаба) ---------------------------------------
+const URL_RE = /https?:\/\/[^\s<>()`'"]+[^\s<>()`'".,;:!?]/g;
+function label(url) {
+  const mr = url.match(/^https?:\/\/[^/]+\/(?:.*\/)?([^/]+)\/-\/merge_requests\/(\d+)/);
+  if (mr) return `MR !${mr[2]} · ${mr[1]}`;
+  const pr = url.match(/^https?:\/\/github\.com\/[^/]+\/([^/]+)\/pull\/(\d+)/);
+  if (pr) return `PR #${pr[2]} · ${pr[1]}`;
+  const short = url.replace(/^https?:\/\//, "");
+  return short.length > 48 ? short.slice(0, 47) + "…" : short;
+}
+function linked(text) {
+  const s = String(text || ""), j = (hub.snapshot() || {}).jira || {}, parts = [];
+  for (const m of s.matchAll(URL_RE)) parts.push([m.index, m[0], m[0], label(m[0])]);
+  if (j.url && (j.projects || []).length) {
+    for (const m of s.matchAll(new RegExp(`\\b(?:${j.projects.join("|")})-\\d+\\b`, "g"))) {
+      if (!parts.some(([i, t]) => m.index >= i && m.index < i + t.length)) parts.push([m.index, m[0], `${j.url.replace(/\/$/, "")}/browse/${m[0]}`, m[0]]);
+    }
+  }
+  parts.sort((a, b) => a[0] - b[0]);
+  const frag = document.createDocumentFragment();
+  let pos = 0;
+  for (const [i, t, href, txt] of parts) {
+    if (i < pos) continue;
+    frag.append(s.slice(pos, i));
+    const a = el("a", "ext", txt); a.href = href; a.target = "_blank"; a.rel = "noopener"; a.title = href;
+    a.addEventListener("click", (e) => e.stopPropagation());
+    frag.append(a);
+    pos = i + t.length;
+  }
+  frag.append(s.slice(pos));
+  return frag;
+}
+const rich = (tag, cls, text) => { const x = el(tag, cls); x.append(linked(text)); return x; };
 
 // --- сессии проекта ------------------------------------------------------------------------------------------------
 const under = (cwd, path) => !!(cwd && path) && (cwd === path || cwd.startsWith(path.replace(/\/$/, "") + "/"));
@@ -57,7 +94,9 @@ function leads(snap, p) {   // кто ведёт направления прое
 const dirNames = (p) => (lives(p).length ? lives(p).map((d) => d.slug) : [p.direction]).filter(Boolean).join(" · ");
 function question(s) {
   const q = (s.pending || []).find((r) => r.tool === "AskUserQuestion");
-  if (q) return { text: ((q.input || {}).questions || []).map((x) => x.question).join(" · ") || "вопрос формой", since: q.since || s.since };
+  if (q) return { text: ((q.input || {}).questions || []).map((x) => x.header || x.question).join(" · ") || "вопрос формой", since: q.since || s.since, asks: s.pending };
+  const perm = (s.pending || []).find((r) => r.request_id);
+  if (perm) return { text: `просит разрешение: ${perm.tool}`, since: perm.since || s.since, asks: s.pending };
   const r = (s.requests || []).find((x) => x.state === "needs-owner");
   if (r) return { text: `просит ${r.tool}`, since: r.since || s.since };
   if (s.attention && (s.attention.ask || s.attention.text)) return { text: s.attention.ask || s.attention.text, since: s.since };
@@ -66,6 +105,130 @@ function question(s) {
 function waiting(snap, p) {
   for (const s of leads(snap, p)) { const q = question(s); if (q) return { ...q, session: s.name, dir: s.backlog || s.name }; }
   return null;
+}
+const ACTIVE = ["busy", "starting"];
+function doing(s) {
+  const t = (s.todos || []).find((i) => i.status === "in_progress");
+  return (s.recap && s.recap.text) || (t && (t.activeForm || t.content)) || (s.away && s.away.text) || "работает";
+}
+function working(snap, p) {   // кто работает над проектом прямо сейчас: ведущие направлений и сессии в папке проекта
+  const slugs = lives(p).map((d) => d.slug).concat(p.direction ? [p.direction] : []);
+  return (snap.sessions || []).filter((s) => s.kind !== "hub" && ACTIVE.includes(s.state) &&
+    (slugs.includes(s.name) || slugs.includes(s.backlog) || under(s.cwd, p.path)));
+}
+
+// --- «новое» и «Что изменилось»: что сдвинулось с тех пор, как владелец нажал «Прочитал» (помнит браузер) -------------
+const SEEN = `${PLUGIN}.seen`;
+let seen = null;
+try { seen = JSON.parse(localStorage.getItem(SEEN) || "null"); } catch { seen = null; }
+const mark = (p) => {
+  const m = p.memory || {};
+  return JSON.stringify([m.stage || null, m.note || "", m.goal || "", (m.next || []).map((x) => [x.text, !!x.done]), m.questions || "",
+    (p.board || {}).counts || null, (p.tasks || []).map((t) => `${t.home || ""}|${t.id}|${t.status}`).sort()]);
+};
+function markRead() {
+  seen = { at: Date.now() / 1000, cards: Object.fromEntries(data.projects.map((p) => [p.name, mark(p)])) };
+  try { localStorage.setItem(SEEN, JSON.stringify(seen)); } catch { /* приватный режим: отметки до перезагрузки */ }
+}
+const fresh = (p) => (!seen || seen.cards[p.name] === mark(p) ? null : seen.cards[p.name] ? "изменилось" : "новое");
+function changes() {
+  const since = seen ? seen.at : Infinity, out = [];
+  for (const p of data.projects) {
+    const doneIds = new Set();
+    for (const d of lives(p)) {
+      for (const t of d.board.done) {
+        const ts = when(t.date);
+        if (ts > since) { out.push({ ts, p, text: `сделано: ${short(t.title)}` }); if (t.id) doneIds.add(t.id); }
+      }
+    }
+    for (const h of (p.memory || {}).history || []) {
+      const id = /^задача (TASK-\d+): Готово$/.exec(h.what);
+      if (h.ts > since && !(id && doneIds.has(id[1]))) out.push({ ts: h.ts, p, text: `${who(h.by)}: ${h.what}` });
+    }
+  }
+  return out.sort((a, b) => b.ts - a.ts);
+}
+
+// --- ответ на карточку вопроса прямо здесь (снимок ядра: открыта, пока сессия в диалоге) -----------------------------
+const REC = /\s*\(Recommended\)\s*/i;
+async function reply(session, ask) {
+  const pick = chosen.get(ask.request_id) || {}, answers = {};
+  for (const q of (ask.input || {}).questions || []) answers[q.question] = (pick[q.question] || []).join(", ");
+  answered.set(ask.request_id, "Отправляю…");
+  draw(rootRef, hub.snapshot());
+  const r = await hub.post("/api/answer", { session, request_id: ask.request_id, answers });
+  answered.set(ask.request_id, (r && r.error) || "Ответ ушёл");
+  draw(rootRef, hub.snapshot());
+}
+function askBox(session, ask) {
+  const box = el("div", "ask-card"), id = ask.request_id, done = answered.get(id);
+  if (ask.tool !== "AskUserQuestion") {
+    const inp = ask.input || {};
+    box.append(el("code", "cmd", String(inp.command || inp.file_path || inp.url || JSON.stringify(inp)).slice(0, 300)));
+    const bar = el("div", "opts");
+    for (const [b, t] of [["allow", "Разрешить"], ["deny", "Запретить"]]) {
+      const x = el("button", "btn-s" + (b === "allow" ? " pr" : ""), t); x.type = "button"; x.disabled = !!done;
+      x.addEventListener("click", async () => {
+        answered.set(id, "Отправляю…"); draw(rootRef, hub.snapshot());
+        const r = await hub.post("/api/permission", { session, request_id: id, behavior: b });
+        answered.set(id, (r && r.error) || "Ушло"); draw(rootRef, hub.snapshot());
+      });
+      bar.append(x);
+    }
+    box.append(bar);
+    if (done) box.append(el("div", "hint", done));
+    return box;
+  }
+  const qs = (ask.input || {}).questions || [], pick = chosen.get(id) || {};
+  qs.forEach((q, i) => {
+    const sec = el("div", "qs");
+    if (q.header && qs.length > 1) sec.append(el("span", "qh", q.header));   // у одного вопроса заголовок - в строке «Ждёт вас»
+    sec.append(rich("div", "q", q.question));
+    const bar = el("div", "opts");
+    for (const o of q.options || []) {
+      const on = (pick[q.question] || []).includes(o.label);
+      const b = el("button", "btn-s opt" + (REC.test(o.label) ? " rec" : "") + (on ? " on" : ""), o.label.replace(REC, "").trim());
+      b.type = "button"; b.title = o.description || ""; b.disabled = done === "Отправляю…";
+      b.addEventListener("click", () => {
+        const cur = pick[q.question] || [];
+        pick[q.question] = q.multiSelect ? (on ? cur.filter((v) => v !== o.label) : [...cur, o.label]) : [o.label];
+        chosen.set(id, pick);
+        if (qs.length === 1 && !q.multiSelect) reply(session, ask); else draw(rootRef, hub.snapshot());
+      });
+      bar.append(b);
+    }
+    const toggle = (set, key, t) => {
+      const b = el("button", "btn-s opt ghost", t); b.type = "button";
+      b.addEventListener("click", () => { if (set.has(key)) set.delete(key); else set.add(key); draw(rootRef, hub.snapshot()); });
+      return b;
+    };
+    if (i === qs.length - 1) bar.append(toggle(own, id, "Своё…"));
+    if ((q.options || []).some((o) => o.description)) bar.append(toggle(why, `${id}:${i}`, why.has(`${id}:${i}`) ? "Скрыть пояснения" : "Пояснения"));
+    sec.append(bar);
+    if (why.has(`${id}:${i}`)) {
+      const dl = el("dl", "why");
+      for (const o of q.options || []) dl.append(el("dt", null, o.label.replace(REC, "").trim()), el("dd", null, o.description || ""));
+      sec.append(dl);
+    }
+    box.append(sec);
+  });
+  if (qs.length > 1 || qs.some((q) => q.multiSelect)) {
+    const ready = qs.every((q) => (pick[q.question] || []).length);
+    const go = el("button", "btn-s pr", "Ответить"); go.type = "button";
+    go.disabled = !ready || done === "Отправляю…"; go.title = ready ? "" : "Выберите ответ на каждый вопрос";
+    go.addEventListener("click", () => reply(session, ask));
+    box.append(go);
+  }
+  if (done) box.append(el("div", "hint", done));
+  if (own.has(id)) {
+    const key = `own:${id}`;
+    if (!inputs.has(key)) {
+      inputs.set(key, hub.input({ to: session, key: `${PLUGIN}:${key}`, placeholder: `Ответ ${session} своими словами - уйдёт ответом на карточку`,
+        onSent: () => { own.delete(id); inputs.delete(key); draw(rootRef, hub.snapshot()); } }));
+    }
+    box.append(inputs.get(key).node);
+  }
+  return box;
 }
 
 // --- разбор по группам -------------------------------------------------------------------------------------------
@@ -151,6 +314,23 @@ function listView(snap) {
   if (draft) box.append(taskForm(snap, true));
   const show = (k) => filter === "all" || filter === k;
 
+  if (!seen) markRead();   // первый заход: всё, что есть, - не «новое»
+  const moved = changes(), marked = data.projects.filter(fresh).length;
+  if ((moved.length || marked) && filter === "all") {
+    const read = el("button", "btn-s", "Прочитал"); read.type = "button"; read.title = "Снять отметки «новое» и «изменилось»";
+    read.addEventListener("click", () => { markRead(); draw(rootRef, snap); });
+    const list = el("div", "chg");
+    for (const c of moved.slice(0, 8)) {
+      const row = el("div", "chg-r");
+      row.append(el("span", "nm", title(c.p)), rich("span", "t", c.text), el("span", "mut num", ago(c.ts)));
+      row.addEventListener("click", () => openCard(c.p));
+      list.append(row);
+    }
+    if (moved.length > 8) list.append(el("div", "hint", `ещё ${moved.length - 8}`));
+    if (!moved.length) list.append(el("div", "hint", "Сдвинулись карточки с отметкой «изменилось»: этап, бэклог или задачи"));
+    box.append(sec("Что изменилось", moved.length || marked, el("span", "since mut", seen ? `с ${at(seen.at)}` : ""), el("span", "ps-sp"), read), list);
+  }
+
   if ((g.wait.length || g.mine.length) && (show("wait") || show("dir"))) {
     const w = el("div", "wb");
     for (const [p, t] of g.mine) {
@@ -163,11 +343,12 @@ function listView(snap) {
       w.append(row);
     }
     for (const p of g.wait) {
-      const row = el("div", "wi"), nm = el("div", "p", title(p));
+      const row = el("div", "wi" + (p.wait.asks ? " has-ask" : "")), nm = el("div", "p", title(p));
       nm.append(el("span", "dirn", p.wait.dir || p.direction));
-      const btn = el("button", "btn-s pr", "Ответить"); btn.type = "button";
+      const btn = el("button", "btn-s" + (p.wait.asks ? "" : " pr"), p.wait.asks ? "В сессию" : "Ответить"); btn.type = "button";
       btn.addEventListener("click", () => goSession(p.wait.session));
-      row.append(el("span", "dot"), nm, el("div", "t", p.wait.text), el("div", "c", ago(p.wait.since)), btn);
+      row.append(el("span", "dot"), nm, rich("div", "t", p.wait.text), el("div", "c", ago(p.wait.since)), btn);
+      for (const a of p.wait.asks || []) row.append(askBox(p.wait.session, a));
       w.append(row);
     }
     box.append(sec("Ждёт вас", g.wait.length + g.mine.length), w);
@@ -190,8 +371,9 @@ function listView(snap) {
     const list = el("div", "wb");
     for (const p of g.done) {
       const m = p.memory || {}, row = el("div", "fin");
-      row.append(el("span", "nm", title(p)), phase(m.stage || (p.board && p.board.archived ? "Готово" : null)),
-        el("span", null, m.note || ""), el("span", "ps-sp"), el("span", "dirn", p.direction || ""),
+      const f = fresh(p);
+      row.append(el("span", "nm", title(p)), ...(f ? [el("span", "new", f)] : []), phase(m.stage || (p.board && p.board.archived ? "Готово" : null)),
+        rich("span", null, m.note || ""), el("span", "ps-sp"), el("span", "dirn", p.direction || ""),
         el("span", "mut num", ago(Math.max((p.board || {}).changed || 0, m.updated || 0))));
       row.addEventListener("click", () => openCard(p));
       list.append(row);
@@ -208,7 +390,8 @@ function listView(snap) {
     for (const k of [...STAGES, "Без этапа"].filter((x) => by.has(x))) {
       const row = el("div", "rest-g"), v = el("div", "v");
       for (const p of by.get(k)) {
-        const t = el("button", "tag go", title(p)); t.type = "button"; t.title = p.about || p.name;
+        const t = el("button", "tag go" + (fresh(p) ? " fresh" : ""), title(p)); t.type = "button";
+        t.title = (fresh(p) ? `${fresh(p)} · ` : "") + (p.about || p.name);
         t.addEventListener("click", () => openCard(p));
         v.append(t);
       }
@@ -228,11 +411,14 @@ function card(p) {
   const m = p.memory || {}, c = el("div", "card");
   if (p.wait) c.classList.add("wait");
   if (m.stage === "Пауза") c.classList.add("dim");
-  const top = el("div", "top"), t = el("div");
-  t.append(el("div", "nm", title(p)), el("div", "ab", about(p)));
+  const top = el("div", "top"), t = el("div"), nm = el("div", "nm", title(p)), f = fresh(p);
+  if (f) nm.append(el("span", "new", f));
+  t.append(nm, el("div", "ab", about(p)));
   top.append(t, el("span", "ps-sp"), phase(m.stage));
   c.append(top);
-  c.append(el("div", "stg", m.note || (m.stage ? "" : "этап не записан")));
+  c.append(rich("div", "stg", m.note || (m.stage ? "" : "этап не записан")));
+  const now = working(hub.snapshot() || {}, p);
+  if (now.length) c.append(rich("div", "now", `${now[0].name}: ${doing(now[0])}` + (now.length > 1 ? ` (+${now.length - 1})` : "")));
   c.append(...bar(p.board));
   if (p.board.doing.length) {
     const ul = el("ul"); for (const d of p.board.doing.slice(0, 2)) ul.append(el("li", null, d)); c.append(ul);
@@ -295,7 +481,7 @@ function cardView(snap, p) {
   grid.append(memoryBox(snap, p, m, ls));
   const side = el("div", "wb");
   side.style.gap = "16px";
-  side.append(...boardBox(snap, p), doneBox(p, m), historyBox(m), linksBox(snap, p));
+  side.append(...workBox(snap, p), ...boardBox(snap, p), doneBox(p, m), historyBox(m), linksBox(snap, p));
   grid.append(side);
   box.append(grid);
   return box;
@@ -344,22 +530,22 @@ function memoryBox(snap, p, m, ls) {
       fld("Что дальше", inp("next", 5), el("div", "hint", "по пункту в строке; отметки «сделано» сохраняются у тех же пунктов")),
       fld("Открытые вопросы", inp("questions", 2)));
   } else {
-    const fill = (v) => { const d = el("div", "v"); d.append(v || el("span", "fill", "Заполнить")); return d; };
+    const fill = (v) => { const d = el("div", "v"); d.append(v ? linked(v) : el("span", "fill", "Заполнить")); return d; };
     box.append(fld("Этап", seg, fill(m.note)), fld("Цель", fill(m.goal)));
     const ul = el("ul", "next");
     for (const x of m.next || []) {
-      const li = el("li", "tick" + (x.done ? " done" : ""), x.text);
+      const li = rich("li", "tick" + (x.done ? " done" : ""), x.text);
       li.title = x.done ? "Снять отметку" : "Отметить сделанным";
       li.addEventListener("click", () => post(snap, { project: p.name, [x.done ? "undone" : "done"]: [x.text] }));
       ul.append(li);
     }
     box.append(fld("Что дальше", (m.next || []).length ? ul : fill("")));
-    if (m.questions) box.append(fld("Открытые вопросы", el("div", "v", m.questions)));
+    if (m.questions) box.append(fld("Открытые вопросы", rich("div", "v", m.questions)));
   }
   if (p.board && p.board.decisions.length) {
     const ul = el("ul", "dec");
     for (const d of p.board.decisions) {
-      const li = el("li"); li.append(el("span", "d", (d.date || "").slice(5, 10).split("-").reverse().join(".")), el("span", null, d.title));
+      const li = el("li"); li.append(el("span", "d", (d.date || "").slice(5, 10).split("-").reverse().join(".")), rich("span", null, d.title));
       ul.append(li);
     }
     const more = p.board.decisions_total - p.board.decisions.length;
@@ -436,13 +622,28 @@ function doneBox(p, m) {
   return box;
 }
 
+function workBox(snap, p) {
+  const now = working(snap, p);
+  if (!now.length) return [];
+  const box = el("div", "box"), ul = el("ul", "tl");
+  box.append(el("h3", null, "Сейчас работают"));
+  for (const s of now) {
+    const li = el("li"), a = el("a", null, s.name); a.href = `#/s/${encodeURIComponent(s.name)}`;
+    const t = el("span"); t.append(linked(doing(s)), el("span", "mut", ` · идёт ${dur(s.since)}`));
+    li.append(a, t);
+    ul.append(li);
+  }
+  box.append(ul);
+  return [box];
+}
+
 function historyBox(m) {
   const box = el("div", "box");
   box.append(el("h3", null, "История карточки"));
   const hist = (m.history || []).slice(-8).reverse();
   if (!hist.length) { box.append(el("div", "hint", "Правок ещё не было")); return box; }
   const ul = el("ul", "tl");
-  for (const x of hist) { const li = el("li"); const t = el("span"); t.append(el("b", null, who(x.by)), `: ${x.what}`); li.append(el("span", "num", at(x.ts)), t); ul.append(li); }
+  for (const x of hist) { const li = el("li"); const t = el("span"); t.append(el("b", null, who(x.by)), ": ", linked(x.what)); li.append(el("span", "num", at(x.ts)), t); ul.append(li); }
   box.append(ul);
   return box;
 }
@@ -550,7 +751,7 @@ function taskCard(p, t) {
   if (t.assignee) row.append(el("span", "who", mate(t.assignee)));
   c.append(row);
   if (expanded === tkey(t)) {
-    if (t.description) c.append(el("div", "desc", t.description));
+    if (t.description) c.append(rich("div", "desc", t.description));
     const act = el("div", "acts");
     for (const [st, name] of COLS) {
       if (st === t.status) continue;
