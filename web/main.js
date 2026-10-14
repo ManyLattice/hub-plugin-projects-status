@@ -431,6 +431,9 @@ function card(p) {
   const ft = el("div", "ft");
   ft.append(el("span", "dirn", dirNames(p)), el("span", "ps-sp"));
   if (p.wait) ft.append(el("span", "wtag", "ждёт вас"), " · ");
+  const cold = stale(hub.snapshot() || {}, p), up = (p.repos || []).reduce((n, r) => n + (r.unpushed || 0), 0);
+  if (cold) ft.append(el("span", "wtag", `застыл ${cold} дн`), " · ");
+  else if (up) ft.append(el("span", null, `не запушено ${up}`), " · ");
   ft.append(el("span", "num", ago(Math.max(p.board.changed || 0, m.updated || 0))));
   c.append(ft);
   c.addEventListener("click", () => openCard(p));
@@ -455,6 +458,8 @@ function cardView(snap, p) {
   h.append(el("h1", null, title(p)), el("div", "ab", about(p)));
   const meta = el("div", "pc-meta");
   meta.append(phase(m.stage));
+  const cold = stale(snap, p);
+  if (cold) meta.append(el("span", "wtag", `застыл: ${many_(cold, "день", "дня", "дней")} без коммитов`));
   const ls = leads(snap, p);
   if (p.direction) meta.append(el("span", "dirn", dirNames(p)), el("span", null, ls.length ? `· ${ls[0].label || ls[0].state}` : "· сессии нет"));
   meta.append(el("span", "mono", p.exists ? `· ${p.path.replace(/^\/Users\/[^/]+/, "~")}` : "· папки проекта ещё нет"));
@@ -481,7 +486,7 @@ function cardView(snap, p) {
   grid.append(memoryBox(snap, p, m, ls));
   const side = el("div", "wb");
   side.style.gap = "16px";
-  side.append(...workBox(snap, p), ...boardBox(snap, p), doneBox(p, m), historyBox(m), linksBox(snap, p));
+  side.append(...workBox(snap, p), ...repoBox(p), ...boardBox(snap, p), doneBox(p, m), historyBox(m), linksBox(snap, p));
   grid.append(side);
   box.append(grid);
   return box;
@@ -634,6 +639,57 @@ function workBox(snap, p) {
     ul.append(li);
   }
   box.append(ul);
+  return [box];
+}
+
+// --- репо ------------------------------------------------------------------------------------------------------------
+const STALE_DAYS = 7;
+const many_ = (n, one, few, lots) => { const t = n % 10, h = n % 100; return `${n} ${t === 1 && h !== 11 ? one : t >= 2 && t <= 4 && (h < 12 || h > 14) ? few : lots}`; };
+function stale(snap, p) {   // дней без коммитов у проекта в работе, над которым никто не работает; 0 - не застыл
+  const a = Math.max(0, ...(p.repos || []).map((r) => r.latest || 0));
+  if (!["Разработка", "К релизу"].includes((p.memory || {}).stage) || !a || working(snap, p).length || waiting(snap, p)) return 0;
+  const d = Math.floor((Date.now() / 1000 - a) / 86400);
+  return d >= STALE_DAYS ? d : 0;
+}
+function repoFlags(r) {
+  return [r.unpushed ? `${many_(r.unpushed, "коммит", "коммита", "коммитов")} не запушено` : "",
+    r.dirty ? `${many_(r.dirty, "файл", "файла", "файлов")} не закоммичено` : ""].filter(Boolean);
+}
+const reviewsUrl = (r) => (r.web ? r.web + (r.kind === "gitlab" ? "/-/merge_requests" : "/pulls") : "");
+function repoBox(p) {
+  if (!(p.repos || []).length) return [];
+  const box = el("div", "box repo");
+  box.append(el("h3", null, "Репо"));
+  for (const r of p.repos) {
+    const one = el("div", "rp"), top = el("div", "rp-top");
+    const nm = r.web ? el("a", "ext", r.name) : el("b", null, r.name);
+    if (r.web) { nm.href = r.web; nm.target = "_blank"; nm.rel = "noopener"; }
+    top.append(nm, el("span", "mono mut", r.branch || "без ветки"));
+    if (r.branches > 1) top.append(el("span", "mut", `· ${many_(r.branches, "ветка", "ветки", "веток")}`));
+    one.append(top);
+    if (r.head) { const c = el("div", "rp-c"); c.append(linked(r.head.subject), el("span", "mut", ` · ${ago(r.head.ts)} · `), el("span", "mono mut", r.head.hash)); one.append(c); }
+    const flags = repoFlags(r);
+    if (r.unpushed === null) flags.push("нет удалённого репо");
+    if (flags.length) one.append(el("div", "rp-f", flags.join(" · ")));
+    const word = r.kind === "gitlab" ? "MR" : "PR";
+    if (r.prs && r.prs.length) {
+      const ul = el("ul", "rp-pr");
+      for (const x of r.prs) {
+        const li = el("li"), a = el("a", "ext", `${r.kind === "gitlab" ? "!" : "#"}${x.n} ${x.title}`);
+        a.href = x.url; a.target = "_blank"; a.rel = "noopener";
+        li.append(a);
+        if (x.draft) li.append(el("span", "mut", " · черновик"));
+        ul.append(li);
+      }
+      one.append(ul);
+    } else if (r.prs_error && r.web) {
+      const d = el("div", "rp-f mut"), a = el("a", "ext", `открыть ${word}`);
+      a.href = reviewsUrl(r); a.target = "_blank"; a.rel = "noopener";
+      d.append(`${word} не видно (${r.prs_error}) · `, a);
+      one.append(d);
+    } else if (r.prs) one.append(el("div", "rp-f mut", `открытых ${word} нет`));
+    box.append(one);
+  }
   return [box];
 }
 
