@@ -630,16 +630,7 @@ async function createTask(send) {
 // --- написать проекту ------------------------------------------------------------------------------------------------
 const hubName = (snap) => ((snap.sessions || []).find((s) => s.kind === "hub") || { name: "hub" }).name;
 function context(key, words) {
-  const snap = hub.snapshot() || {}, cmd = `python3 ${data.plugin}/pmem.py`;
-  if (!key) {
-    return `${words}\n\n[из «Статуса проектов», по личным проектам. Найди проект (${cmd} show - все этапы) и реши, кому это: ` +
-      `ведущему направления, агенту по профилю или задачей (${cmd} task new <проект> …); ответь коротко, куда ушло]`;
-  }
-  const p = find(key) || { name: key };
-  const dirs = lives(p).map((d) => { const l = leadsOf(snap, [d.slug])[0]; return `${d.slug} - ${l ? `ведёт ${l.name}` : "сессии нет"}`; });
-  return `${words}\n\n[из «Статуса проектов», проект ${p.name}${p.path ? ` (${p.path})` : ""}; направления: ${dirs.join("; ") || "нет"}; ` +
-    `память - ${cmd} show ${p.name}, задачи - ${cmd} task list ${p.name}. Реши, кому это: ведущему нужного направления, ` +
-    `агенту по профилю или задачей (${cmd} task new ${p.name} … --direction …); ответь коротко, куда ушло]`;
+  return key ? `[проект ${key}] ${words}` : `[по проектам] ${words}`;
 }
 function ask(snap, p) {
   const key = p ? p.name : "";
