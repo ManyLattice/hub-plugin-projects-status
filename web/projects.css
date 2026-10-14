@@ -142,6 +142,8 @@
 .pst .cards, .pst .pc-grid { grid-template-columns: minmax(0, 1fr); }
 .pst .wi { grid-template-columns: 8px 1fr auto; }
 .pst .wi .t { grid-column: 2 / -1; }
+.pst .wi .c { grid-column: 2; }
+.pst .wi > .btn-s { grid-column: 3; }
 .pst .rest-g { grid-template-columns: 1fr; }
 }
 
