@@ -97,7 +97,7 @@ function phase(stage) {
 }
 function bar(b) {
   const n = b.counts, all = n["Done"] + n["In Progress"] + n["To Do"] || 1;
-  const box = el("div", "bar");
+  const box = el("div", "pbar");
   for (const [k, c] of [["d", "Done"], ["p", "In Progress"], ["t", "To Do"]]) {
     if (!n[c]) continue;
     const i = el("i", k); i.style.width = `${(100 * n[c]) / all}%`; box.append(i);
@@ -140,7 +140,7 @@ function listView(snap) {
   const chips = el("div", "chips");
   const counts = { all: data.projects.length, dir: g.go.length + g.done.filter((p) => p.board).length, wait: g.wait.length + g.mine.length, nodir: g.rest.length };
   for (const [k, t] of FILTERS) {
-    const c = el("button", "chip", t); c.type = "button"; c.setAttribute("aria-pressed", String(filter === k));
+    const c = el("button", "pchip", t); c.type = "button"; c.setAttribute("aria-pressed", String(filter === k));
     c.append(el("span", "n", String(counts[k])));
     c.addEventListener("click", () => { filter = k; draw(rootRef, snap); });
     chips.append(c);
@@ -283,7 +283,7 @@ function cardView(snap, p) {
 
   const open_ = (p.tasks || []).filter((t) => t.status !== "Done").length, tabs = el("div", "chips");
   for (const [k, t, n] of [["mem", "Память", null], ["tasks", "Задачи", open_]]) {
-    const c = el("button", "chip", t); c.type = "button"; c.setAttribute("aria-pressed", String(tab === k));
+    const c = el("button", "pchip", t); c.type = "button"; c.setAttribute("aria-pressed", String(tab === k));
     if (n) c.append(el("span", "n", String(n)));
     c.addEventListener("click", () => { tab = k; editing = draft = null; draw(rootRef, snap); });
     tabs.append(c);
