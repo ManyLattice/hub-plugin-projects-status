@@ -10,7 +10,10 @@ const FILTERS = [["all", "Все"], ["dir", "С направлением"], ["wa
 
 let data = null, error = "", timer = null, filter = "all", open = null, editing = null, saving = false;
 let tab = "mem", draft = null, expanded = null;   // вкладка карточки, форма новой задачи, раскрытая задача
-const busy = () => editing || draft;
+const inputs = new Map();   // поле «написать проекту» по проекту ("" - главная): узел живёт между перерисовками
+let sent = null;
+const typing = () => [...inputs.values()].some((b) => b.node.contains(document.activeElement));
+const busy = () => editing || draft || typing();
 let rootRef = null;
 
 const port = () => Number(location.port || 80) + 12;
@@ -43,10 +46,15 @@ const who = (by) => (by === "owner" ? "владелец" : by || "-");
 
 // --- сессии проекта ------------------------------------------------------------------------------------------------
 const under = (cwd, path) => !!(cwd && path) && (cwd === path || cwd.startsWith(path.replace(/\/$/, "") + "/"));
-function leads(snap, p) {   // кто ведёт направление проекта
-  if (!p.direction) return [];
-  return (snap.sessions || []).filter((s) => s.state !== "removed" && (s.name === p.direction || s.backlog === p.direction));
+const lives = (p) => (p.directions || []).filter((d) => !d.board.archived);
+function leadsOf(snap, slugs) {   // кто ведёт эти направления
+  return (snap.sessions || []).filter((s) => s.state !== "removed" && (slugs.includes(s.name) || slugs.includes(s.backlog)));
 }
+function leads(snap, p) {   // кто ведёт направления проекта (живые; нет их - последнее)
+  const sl = lives(p).map((d) => d.slug);
+  return leadsOf(snap, sl.length ? sl : p.direction ? [p.direction] : []);
+}
+const dirNames = (p) => (lives(p).length ? lives(p).map((d) => d.slug) : [p.direction]).filter(Boolean).join(" · ");
 function question(s) {
   const q = (s.pending || []).find((r) => r.tool === "AskUserQuestion");
   if (q) return { text: ((q.input || {}).questions || []).map((x) => x.question).join(" · ") || "вопрос формой", since: q.since || s.since };
@@ -56,7 +64,7 @@ function question(s) {
   return null;
 }
 function waiting(snap, p) {
-  for (const s of leads(snap, p)) { const q = question(s); if (q) return { ...q, session: s.name }; }
+  for (const s of leads(snap, p)) { const q = question(s); if (q) return { ...q, session: s.name, dir: s.backlog || s.name }; }
   return null;
 }
 
@@ -102,7 +110,7 @@ const goSession = (name) => { location.hash = `#/s/${encodeURIComponent(name)}`;
 const GENERAL = "-";   // задачи без проекта: общий бэклог владельца
 const general = () => ({ name: GENERAL, general: true, about: "", tasks: data.general || [], tasks_home: null });
 const find = (name) => (name === GENERAL ? general() : data.projects.find((x) => x.name === name));
-const openCard = (p, to = "mem") => { open = p.name; editing = draft = expanded = null; tab = to; draw(rootRef, hub.snapshot()); rootRef.scrollTop = 0; };
+const openCard = (p, to = "mem") => { open = p.name; sent = null; editing = draft = expanded = null; tab = to; draw(rootRef, hub.snapshot()); rootRef.scrollTop = 0; };
 const title = (p) => {
   if (p.general) return "Без проекта";
   const m = /^([^:]+):/.exec(p.about || "");
@@ -137,7 +145,7 @@ function listView(snap) {
     c.addEventListener("click", () => { filter = k; draw(rootRef, snap); });
     chips.append(c);
   }
-  head.append(top, chips);
+  head.append(top, ask(snap, null), chips);
   box.append(head);
   if (error) box.append(el("p", "err", error));
   if (draft) box.append(taskForm(snap, true));
@@ -156,7 +164,7 @@ function listView(snap) {
     }
     for (const p of g.wait) {
       const row = el("div", "wi"), nm = el("div", "p", title(p));
-      nm.append(el("span", "dirn", p.direction));
+      nm.append(el("span", "dirn", p.wait.dir || p.direction));
       const btn = el("button", "btn-s pr", "Ответить"); btn.type = "button";
       btn.addEventListener("click", () => goSession(p.wait.session));
       row.append(el("span", "dot"), nm, el("div", "t", p.wait.text), el("div", "c", ago(p.wait.since)), btn);
@@ -235,7 +243,7 @@ function card(p) {
     c.append(ul);
   }
   const ft = el("div", "ft");
-  ft.append(el("span", "dirn", p.direction), el("span", "ps-sp"));
+  ft.append(el("span", "dirn", dirNames(p)), el("span", "ps-sp"));
   if (p.wait) ft.append(el("span", "wtag", "ждёт вас"), " · ");
   ft.append(el("span", "num", ago(Math.max(p.board.changed || 0, m.updated || 0))));
   c.append(ft);
@@ -247,7 +255,7 @@ function card(p) {
 function cardView(snap, p) {
   const m = p.memory || { next: [], history: [] }, box = el("div", "pc");
   const back = el("button", "pc-back", "← Статус проектов"); back.type = "button";
-  back.addEventListener("click", () => { open = null; editing = null; draft = null; draw(rootRef, snap); });
+  back.addEventListener("click", () => { open = null; editing = null; draft = null; sent = null; draw(rootRef, snap); });
   box.append(back);
   if (p.general) {
     const head = el("div", "pc-head"), h = el("div");
@@ -262,16 +270,16 @@ function cardView(snap, p) {
   const meta = el("div", "pc-meta");
   meta.append(phase(m.stage));
   const ls = leads(snap, p);
-  if (p.direction) meta.append(el("span", "dirn", p.direction), el("span", null, ls.length ? `· ${ls[0].label || ls[0].state}` : "· сессии нет"));
+  if (p.direction) meta.append(el("span", "dirn", dirNames(p)), el("span", null, ls.length ? `· ${ls[0].label || ls[0].state}` : "· сессии нет"));
   meta.append(el("span", "mono", p.exists ? `· ${p.path.replace(/^\/Users\/[^/]+/, "~")}` : "· папки проекта ещё нет"));
   h.append(meta);
   head.append(h, el("span", "ps-sp"));
-  if (ls.length) {
-    const o = el("button", "btn-s", `Открыть ${ls[0].name}`); o.type = "button";
-    o.addEventListener("click", () => goSession(ls[0].name));
+  for (const s of ls.slice(0, 3)) {
+    const o = el("button", "btn-s", `Открыть ${s.name}`); o.type = "button";
+    o.addEventListener("click", () => goSession(s.name));
     head.append(o);
   }
-  box.append(head);
+  box.append(head, ask(snap, p));
 
   const open_ = (p.tasks || []).filter((t) => t.status !== "Done").length, tabs = el("div", "chips");
   for (const [k, t, n] of [["mem", "Память", null], ["tasks", "Задачи", open_]]) {
@@ -287,7 +295,7 @@ function cardView(snap, p) {
   grid.append(memoryBox(snap, p, m, ls));
   const side = el("div", "wb");
   side.style.gap = "16px";
-  side.append(boardBox(snap, p), doneBox(p, m), historyBox(m), linksBox(snap, p));
+  side.append(...boardBox(snap, p), doneBox(p, m), historyBox(m), linksBox(snap, p));
   grid.append(side);
   box.append(grid);
   return box;
@@ -365,26 +373,45 @@ function memoryBox(snap, p, m, ls) {
 }
 
 function boardBox(snap, p) {
-  const box = el("div", "box");
-  if (p.board && !p.board.archived) {
-    const h = el("h3", null, "Бэклог"); h.append(el("span", "ps-sp"), el("span", "src", p.direction));
-    box.append(h, ...bar(p.board));
-    if (p.board.doing.length) { const ul = el("ul", "tasks"); for (const d of p.board.doing) ul.append(el("li", null, d)); box.append(ul); }
-    return box;
+  const out = [], live = lives(p);
+  for (const d of live) {
+    const box = el("div", "box"), h = el("h3", null, live.length > 1 ? "Направление" : "Бэклог");
+    const a = el("a", "src", d.slug); a.href = `#/board/${encodeURIComponent(d.slug)}`;
+    h.append(el("span", "ps-sp"), a);
+    if (d.linked) {
+      const u = el("button", "btn-s", "отвязать"); u.type = "button"; u.title = "направление с другим репо привязано к проекту вручную";
+      u.addEventListener("click", () => post(snap, { project: p.name, unlink: d.slug }));
+      h.append(u);
+    }
+    const ls = leadsOf(snap, [d.slug]);
+    box.append(h, ...bar(d.board), el("div", "hint", ls.length ? `ведёт ${ls[0].name} · ${ls[0].label || ls[0].state}` : "сессии нет"));
+    if (d.board.doing.length) { const ul = el("ul", "tasks"); for (const x of d.board.doing) ul.append(el("li", null, x)); box.append(ul); }
+    out.push(box);
   }
-  box.append(el("h3", null, p.board ? "Направление в архиве" : "Направления нет"));
-  const e = el("div", "empty-dir");
-  e.append(p.board ? `${p.direction}: закрыто, бэклог в архиве` : "Долгой сессии с бэклогом у проекта нет.");
-  const hubS = (snap.sessions || []).find((s) => s.kind === "hub");
-  const b = el("button", "btn-s pr", "Завести направление"); b.type = "button";
-  b.addEventListener("click", async () => {
-    b.disabled = true;
-    await hub.post("/api/send", { session: hubS ? hubS.name : "hub", text: `Заведи направление для проекта ${p.name} (${p.path})` });
-    b.textContent = "Хаб получил просьбу";
-  });
-  e.append(b);
-  box.append(e);
-  return box;
+  if (!live.length) {
+    const box = el("div", "box");
+    box.append(el("h3", null, p.board ? "Направление в архиве" : "Направления нет"));
+    const e = el("div", "empty-dir");
+    e.append(p.board ? `${p.direction}: закрыто, бэклог в архиве` : "Долгой сессии с бэклогом у проекта нет.");
+    const hubS = (snap.sessions || []).find((s) => s.kind === "hub");
+    const b = el("button", "btn-s pr", "Завести направление"); b.type = "button";
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      await hub.post("/api/send", { session: hubS ? hubS.name : "hub", text: `Заведи направление для проекта ${p.name} (${p.path})`, action: true });
+      b.textContent = "Хаб получил просьбу";
+    });
+    e.append(b);
+    box.append(e);
+    out.push(box);
+  }
+  if (!p.unlisted && (data.free || []).length) {
+    const box = el("div", "box link"), sel = el("select");
+    for (const [v, t] of [["", "Привязать направление с другим репо…"], ...data.free.map((x) => [x, x])]) { const o = el("option", null, t); o.value = v; sel.append(o); }
+    sel.addEventListener("change", () => { if (sel.value) post(snap, { project: p.name, link: sel.value }); });
+    box.append(sel);
+    out.push(box);
+  }
+  return out;
 }
 
 const day = (date) => (date || "").slice(5, 10).split("-").reverse().join(".");
@@ -392,11 +419,12 @@ const short = (t) => t.replace(/\s*\(§[^)]*\)\s*$/, "");
 
 function doneBox(p, m) {
   const box = el("div", "box"), h = el("h3", null, "Сделано");
-  const own = p.tasks_home ? [] : (p.tasks || []).filter((t) => t.status === "Done").map((t) => ({ title: t.title, date: t.updated || t.created || "" }));
+  const mine = (p.tasks || []).filter((t) => !t.home);
+  const own = mine.filter((t) => t.status === "Done").map((t) => ({ title: t.title, date: t.updated || t.created || "" }));
   const tasks = [...own, ...((p.board && p.board.done) || [])].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 8);
   const ticked = tasks.length ? [] : (m.next || []).filter((x) => x.done);
-  const total = (p.board ? p.board.counts.Done : 0) + own.length;
-  const rest = p.board ? p.board.counts["In Progress"] + p.board.counts["To Do"] : (p.tasks || []).length - own.length;
+  const total = (p.board && !p.board.archived ? p.board.counts.Done : 0) + own.length;
+  const rest = (p.board && !p.board.archived ? p.board.counts["In Progress"] + p.board.counts["To Do"] : 0) + mine.length - own.length;
   if (total) h.append(el("span", "ps-sp"), el("span", "src", `${total} из ${total + rest} задач бэклога`));
   box.append(h);
   if (!tasks.length && !ticked.length) { box.append(el("div", "hint", "Закрытых задач и отмеченных пунктов пока нет")); return box; }
@@ -424,10 +452,13 @@ function linksBox(snap, p) {
   box.append(el("h3", null, "Ссылки"));
   const row = (k, v) => { const d = el("div"); d.append(el("span", "k", k), v); l.append(d); };
   row("Папка", el("span", "mono", p.exists ? p.path.replace(/^\/Users\/[^/]+/, "~") : "ещё нет"));
-  if (p.board && !p.board.archived) {
-    const a = el("a", "mono", p.direction); a.href = `#/board/${encodeURIComponent(p.direction)}`; row("Доска", a);
+  if (lives(p).length) {
+    const v = el("span");
+    lives(p).forEach((d, i) => { const a = el("a", "mono", d.slug); a.href = `#/board/${encodeURIComponent(d.slug)}`; v.append(...(i ? [", ", a] : [a])); });
+    row(lives(p).length > 1 ? "Доски" : "Доска", v);
   }
-  const ses = (snap.sessions || []).filter((s) => s.state !== "removed" && s.kind !== "hub" && (under(s.cwd, p.path) || (p.direction && s.backlog === p.direction)));
+  const slugs = lives(p).map((d) => d.slug).concat(p.direction ? [p.direction] : []);
+  const ses = (snap.sessions || []).filter((s) => s.state !== "removed" && s.kind !== "hub" && (under(s.cwd, p.path) || slugs.includes(s.backlog)));
   if (ses.length) {
     const v = el("span");
     ses.forEach((s, i) => { const a = el("a", null, s.name); a.href = `#/s/${encodeURIComponent(s.name)}`; v.append(...(i ? [", ", a] : [a])); });
@@ -449,14 +480,17 @@ function setStatus(p, t, status) {
   if (t.status === status) return;
   t.status = status; t.updated = new Date().toISOString().slice(0, 16).replace("T", " ");
   draw(rootRef, hub.snapshot());
-  post(hub.snapshot(), { task: "status", project: p.name, id: t.id, status });
+  post(hub.snapshot(), { task: "status", project: p.name, id: t.id, status, ...(p.general ? {} : { direction: t.home || "" }) });
 }
 
-const home = (p) => (p.general ? "общий бэклог без проекта" : p.tasks_home ? `бэклог направления ${p.tasks_home}` : "свой бэклог проекта");
+const tkey = (t) => `${t.home || ""}|${t.id}`;
+const many = (p) => !p.general && ((p.homes || []).length > 1 || (p.tasks || []).some((t) => !t.home) && (p.homes || []).length > 0);
+const where = (p, dir) => (p.general ? "общий бэклог без проекта" : dir ? `бэклог направления ${dir}` : "свой бэклог проекта");
+const home = (p) => (p.general ? "общий бэклог без проекта" : (p.homes || []).length > 1 ? `бэклоги: ${p.homes.join(", ")} и свой проекта` : p.tasks_home ? `бэклог направления ${p.tasks_home}` : "свой бэклог проекта");
 const newDraft = (snap, p) => {
   const ls = p && !p.general ? leads(snap, p) : [];
   return { project: p ? p.name : "", title: "", description: "", type: "task", priority: "medium",
-    assignee: ls.length ? ls[0].name : p && !p.general ? "" : "owner", due: "" };
+    assignee: ls.length ? ls[0].name : p && !p.general ? "" : "owner", due: "", direction: (p && p.tasks_home) || "" };
 };
 
 function tasksView(snap, p) {
@@ -485,7 +519,7 @@ function tasksView(snap, p) {
     col.addEventListener("dragleave", () => col.classList.remove("over"));
     col.addEventListener("drop", (e) => {
       e.preventDefault(); col.classList.remove("over");
-      const t = all.find((x) => x.id === e.dataTransfer.getData("text/plain"));
+      const t = all.find((x) => tkey(x) === e.dataTransfer.getData("text/plain"));
       if (t) setStatus(p, t, st);
     });
     const shown = st === "Done" ? list.slice(0, 8) : list;
@@ -500,21 +534,22 @@ function tasksView(snap, p) {
 }
 
 function taskCard(p, t) {
-  const c = el("div", "tk" + (expanded === t.id ? " open" : "") + (t.assignee === "owner" ? " me" : ""));
+  const c = el("div", "tk" + (expanded === tkey(t) ? " open" : "") + (t.assignee === "owner" ? " me" : ""));
   c.draggable = true;
-  c.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", t.id); c.classList.add("drag"); });
+  c.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", tkey(t)); c.classList.add("drag"); });
   c.addEventListener("dragend", () => c.classList.remove("drag"));
-  c.addEventListener("click", () => { expanded = expanded === t.id ? null : t.id; draw(rootRef, hub.snapshot()); });
+  c.addEventListener("click", () => { expanded = expanded === tkey(t) ? null : tkey(t); draw(rootRef, hub.snapshot()); });
   c.append(el("div", "tt", t.title));
   const row = el("div", "row");
   row.append(el("span", null, t.id));
+  if (many(p)) row.append(el("span", "dirn", t.home || "проект"));
   if (t.type && t.type !== "task") row.append(el("span", null, (TYPES.find(([k]) => k === t.type) || [, t.type])[1]));
   if (t.priority && t.status !== "Done") row.append(el("span", `pr-${t.priority[0]}`, `● ${PRIO[t.priority] || t.priority}`));
   if (t.status === "Done") row.append(el("span", null, dmy(t.updated || t.created)));
   else if (t.due) row.append(el("span", overdue(t) ? "late" : null, `до ${dmy(t.due)}`));
   if (t.assignee) row.append(el("span", "who", mate(t.assignee)));
   c.append(row);
-  if (expanded === t.id) {
+  if (expanded === tkey(t)) {
     if (t.description) c.append(el("div", "desc", t.description));
     const act = el("div", "acts");
     for (const [st, name] of COLS) {
@@ -531,13 +566,17 @@ function taskCard(p, t) {
 function taskForm(snap, pick) {
   const p = find(draft.project);
   const box = el("div", "box"), h = el("h3", null, "Новая задача");
-  h.append(el("span", "ps-sp"), el("span", "src", p ? `уйдёт в ${home(p)}` : "выберите проект"));
+  h.append(el("span", "ps-sp"), el("span", "src", p ? `уйдёт в ${where(p, draft.direction)}` : "выберите проект"));
   box.append(h);
   const fld = (k, v, cls) => { const f = el("div", "fld" + (cls ? ` ${cls}` : "")); f.append(el("div", "k", k), v); return f; };
   const bind = (x, k) => { x.value = draft[k]; x.addEventListener("input", () => { draft[k] = x.value; });
     x.addEventListener("keydown", (e) => { if (e.key === "Escape") { draft = null; draw(rootRef, snap); } }); return x; };
   const select = (k, opts) => { const s = el("select"); for (const [v, t] of opts) { const o = el("option", null, t); o.value = v; s.append(o); }
-    s.addEventListener("change", () => { draft[k] = s.value; draw(rootRef, snap); }); s.value = draft[k]; return s; };
+    s.addEventListener("change", () => {
+      draft[k] = s.value;
+      if (k === "project") draft.direction = (find(s.value) || {}).tasks_home || "";
+      draw(rootRef, snap);
+    }); s.value = draft[k]; return s; };
   const nm = bind(el("input"), "title"); nm.placeholder = "Что сделать";
   const ds = bind(el("textarea"), "description"); ds.rows = 3; ds.placeholder = "Подробности и критерии приёмки";
   const due = bind(el("input"), "due"); due.type = "date";
@@ -547,6 +586,7 @@ function taskForm(snap, pick) {
   const all = [...data.projects].sort((a, b) => live(b) - live(a) || title(a).localeCompare(title(b), "ru"));
   if (pick) nf.append(fld("Проект", select("project", [["", "выберите проект"], [GENERAL, "Без проекта"], ...all.map((x) => [x.name, title(x)])])), fld("Название", nm, "wide"));
   else nf.append(fld("Название", nm, "full"));
+  if (p && (p.homes || []).length) nf.append(fld("Куда", select("direction", [...p.homes.map((x) => [x, `направление ${x}`]), ["", "свой бэклог проекта"]]), "full"));
   nf.append(fld("Описание", ds, "full"),
     fld("Тип", select("type", TYPES)), fld("Приоритет", select("priority", Object.entries(PRIO))),
     fld("Исполнитель", select("assignee", [["", "без исполнителя"], ["owner", "вы"], ...people.map((n) => [n, n])])), fld("Срок", due));
@@ -568,7 +608,7 @@ function taskForm(snap, pick) {
 async function createTask(send) {
   const d = draft, p = find(d.project);
   if (!p) { error = "Выберите проект"; draw(rootRef, hub.snapshot()); return; }
-  const op = { task: "create", project: p.name, title: d.title.trim() };
+  const op = { task: "create", project: p.name, title: d.title.trim(), ...((p.homes || []).length ? { direction: d.direction } : {}) };
   if (!op.title) { error = "У задачи нет названия"; draw(rootRef, hub.snapshot()); return; }
   for (const k of ["description", "type", "priority", "assignee", "due"]) if (d[k].trim()) op[k] = d[k].trim();
   if (JSON.stringify(op).length > 2000) { error = "Задача длиннее 2000 знаков: сократите описание"; draw(rootRef, hub.snapshot()); return; }
@@ -578,12 +618,50 @@ async function createTask(send) {
     const lines = [p.general ? `Задача без проекта: «${op.title}»` : `Задача по проекту ${p.name}: «${op.title}»`];
     if (op.description) lines.push(op.description);
     lines.push([op.priority && `приоритет ${PRIO[op.priority]}`, op.due && `срок ${dmy(op.due)}`].filter(Boolean).join(", "));
-    lines.push(`Заведена в ${home(p)}. Номер и статус: python3 ${data.plugin}/pmem.py task list ${p.name}; ` +
-      `сменить статус: python3 ${data.plugin}/pmem.py task status ${p.name} <TASK-N> "In Progress" (потом Done).`);
+    const dirArg = op.direction !== undefined ? ` --direction "${op.direction}"` : "";
+    lines.push(`Заведена в ${where(p, op.direction)}. Номер и статус: python3 ${data.plugin}/pmem.py task list ${p.name}${dirArg}; ` +
+      `сменить статус: python3 ${data.plugin}/pmem.py task status ${p.name} <TASK-N> "In Progress"${dirArg} (потом Done).`);
     await hub.post("/api/send", { session: d.assignee, text: lines.filter(Boolean).join("\n") });
   }
   saving = false;
   if (open === p.name) { draft = null; draw(rootRef, hub.snapshot()); } else openCard(p, "tasks");
+}
+
+// --- написать проекту ------------------------------------------------------------------------------------------------
+const hubName = (snap) => ((snap.sessions || []).find((s) => s.kind === "hub") || { name: "hub" }).name;
+function context(key, words) {
+  const snap = hub.snapshot() || {}, cmd = `python3 ${data.plugin}/pmem.py`;
+  if (!key) {
+    return `${words}\n\n[из «Статуса проектов», по личным проектам. Найди проект (${cmd} show - все этапы) и реши, кому это: ` +
+      `ведущему направления, агенту по профилю или задачей (${cmd} task new <проект> …); ответь коротко, куда ушло]`;
+  }
+  const p = find(key) || { name: key };
+  const dirs = lives(p).map((d) => { const l = leadsOf(snap, [d.slug])[0]; return `${d.slug} - ${l ? `ведёт ${l.name}` : "сессии нет"}`; });
+  return `${words}\n\n[из «Статуса проектов», проект ${p.name}${p.path ? ` (${p.path})` : ""}; направления: ${dirs.join("; ") || "нет"}; ` +
+    `память - ${cmd} show ${p.name}, задачи - ${cmd} task list ${p.name}. Реши, кому это: ведущему нужного направления, ` +
+    `агенту по профилю или задачей (${cmd} task new ${p.name} … --direction …); ответь коротко, куда ушло]`;
+}
+function ask(snap, p) {
+  const key = p ? p.name : "";
+  let box = inputs.get(key);
+  if (!box) {
+    box = hub.input({ to: hubName(snap), key: `${PLUGIN}:${key || "all"}`,
+      placeholder: p ? `Написать проекту ${title(p)}…` : "Написать по проектам…",
+      hint: p ? "уйдёт Хабу с контекстом проекта: он решит, кому - ведущему направления, агенту или задачей"
+        : "уйдёт Хабу: он найдёт проект и решит, кому",
+      prefix: (w) => context(key, w),
+      onSent: () => { sent = key; draw(rootRef, hub.snapshot()); } });
+    inputs.set(key, box);
+  }
+  const wrap = el("div", "ask");
+  wrap.append(box.node);
+  if (sent === key) {
+    const n = el("div", "hint"), a = el("a", null, "ответ - в чате Хаба →");
+    a.href = `#/s/${encodeURIComponent(hubName(snap))}`;
+    n.append(a);
+    wrap.append(n);
+  }
+  return wrap;
 }
 
 // --- правка ----------------------------------------------------------------------------------------------------------

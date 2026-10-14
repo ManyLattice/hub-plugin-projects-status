@@ -172,3 +172,8 @@
   background: var(--background); color: var(--foreground); font: inherit; font-size: var(--text-sm); }
 .pst .wi .c.late { color: var(--destructive); }
 @media (max-width: 760px) { .pst .kb, .pst .nf { grid-template-columns: minmax(0, 1fr); } .pst .nf .wide { grid-column: auto; } }
+.pst .ask { display: grid; gap: 6px; }
+.pst .pc .ask { margin: 4px 0 14px; }
+.pst .box.link select { width: 100%; box-sizing: border-box; border: 1px solid var(--input); border-radius: var(--radius); padding: 7px 8px;
+  background: var(--background); color: var(--foreground); font: inherit; font-size: var(--text-sm); }
+.pst .tk .row .dirn { font-size: var(--text-xs); }
