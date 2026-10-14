@@ -72,7 +72,7 @@ class Fold(unittest.TestCase):
         self.assertEqual(touched, {"app", "where"})
         self.assertEqual([t["title"] for t in tasks.read_all(os.path.join(self.state, "directions", "app-v2", "backlog"))],
                          ["Срез 8: виджет"])
-        [t] = tasks.read_all(homes["where"])
+        [t] = tasks.read_all(homes["where"]["paths"][""])
         self.assertEqual((t["title"], t["status"], t["assignee"]), ("Оформить подписку", "Done", "owner"))
         self.assertEqual([h["what"] for h in st["projects"]["where"]["history"]],
                          ["задача TASK-1 «Оформить подписку» заведена, исполнитель - владелец", "задача TASK-1: Готово"])

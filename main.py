@@ -60,7 +60,11 @@ def fold(st, posts, known, homes=None):
                 name = op.get("project")
                 if name != tasks.GENERAL and name not in known:
                     raise tasks.Invalid(f"нет проекта {name!r} (hub projects)")
-                what = task(tasks.parse(op), homes[name])
+                op, h = tasks.parse(op), homes[name]
+                key = op.get("direction", h["default"])
+                if key not in h["paths"]:
+                    raise tasks.Invalid(f"у проекта {name} нет направления {key}")
+                what = task(op, h["paths"][key])
                 log = st.setdefault("general", []) if name == tasks.GENERAL else \
                     st["projects"].setdefault(name, memory.empty())["history"]
                 log.append({"ts": p["ts"], "by": p["by"], "what": what})
@@ -98,7 +102,9 @@ def follow(st):
             cfg = projects()
             fresh = [p for p in posts if int(p["id"][1:]) > st["last"]]
             known = data.known(STATE, cfg) if fresh else set()
-            homes = data.task_homes(STATE, cfg) if fresh else {}
+            with lock:
+                mems = json.loads(json.dumps(st["projects"])) if fresh else {}
+            homes = data.task_homes(STATE, cfg, None, mems) if fresh else {}
             with lock:
                 touched = fold(st, fresh, known, homes)
                 if touched or not os.path.exists(os.path.join(HOME, "memory.json")):

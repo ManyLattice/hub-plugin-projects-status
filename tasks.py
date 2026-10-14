@@ -2,8 +2,9 @@
 направления и `hub direction <slug> task …`. У проекта с живым направлением это бэклог направления, без него - свой
 бэклог проекта рядом с его памятью. Задачи без проекта (project "-") - в общем бэклоге владельца.
 
-Правка - пост в канал плагина, как правка памяти: {"task": "create", "project", "title", ["description", "type",
-"priority", "assignee", "due"]} или {"task": "status", "project", "id", "status"}."""
+Правка - пост в канал плагина, как правка памяти: {"task": "create", "project", "title", ["direction", "description",
+"type", "priority", "assignee", "due"]} или {"task": "status", "project", "id", "status", ["direction"]}. direction - в
+какой бэклог: направление проекта или "" (свой); нет его - бэклог по умолчанию (data.task_homes)."""
 import datetime
 import glob
 import os
@@ -27,10 +28,10 @@ def parse(op):
     """Пост {"task": …} -> проверенная правка; не годится - Invalid с причиной."""
     kind = op.get("task")
     if kind == "create":
-        extra = set(op) - {"task", "project", "title", "description", "type", "priority", "assignee", "due"}
+        extra = set(op) - {"task", "project", "direction", "title", "description", "type", "priority", "assignee", "due"}
         if extra:
             raise Invalid(f"неизвестные поля: {', '.join(sorted(extra))}")
-        if not all(isinstance(op.get(k, ""), str) for k in ("title", "description", "type", "priority", "assignee", "due")):
+        if not all(isinstance(op.get(k, ""), str) for k in ("direction", "title", "description", "type", "priority", "assignee", "due")):
             raise Invalid("поля задачи - строки")
         op = {**op, "title": " ".join(op.get("title", "").split())}
         if not op["title"]:
@@ -45,8 +46,10 @@ def parse(op):
             raise Invalid("исполнитель - имя сессии или owner")
         return op
     if kind == "status":
-        if set(op) - {"task", "project", "id", "status"}:
-            raise Invalid("status: только project, id, status")
+        if set(op) - {"task", "project", "direction", "id", "status"}:
+            raise Invalid("status: только project, direction, id, status")
+        if not isinstance(op.get("direction", ""), str):
+            raise Invalid("direction - строка")
         if op.get("status") not in STATUSES:
             raise Invalid(f"статус - один из: {', '.join(STATUSES)}")
         if not re.fullmatch(r"(?i)task-\d+", str(op.get("id") or "")):

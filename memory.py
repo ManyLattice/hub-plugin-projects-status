@@ -4,9 +4,10 @@
 плагина сворачивает посты в файл состояния и пишет каждому проекту `<проект>.md` - его читают сессии."""
 import datetime
 import json
+import re
 
 STAGES = ["Кандидат", "Разработка", "К релизу", "В сторе", "Пауза", "Готово"]
-KEYS = {"project", "stage", "note", "goal", "next", "add", "done", "undone", "questions"}
+KEYS = {"project", "stage", "note", "goal", "next", "add", "done", "undone", "questions", "link", "unlink"}
 LIMIT = 2000   # пост в канал плагина - до 2000 знаков (core/reducer.py _ext_post)
 
 
@@ -29,6 +30,9 @@ def parse(text, projects):
         raise Invalid(f"нет проекта {upd.get('project')!r} (hub projects)")
     if "stage" in upd and upd["stage"] not in STAGES:
         raise Invalid(f"этап - один из: {', '.join(STAGES)}")
+    for k in ("link", "unlink"):
+        if k in upd and not (isinstance(upd[k], str) and re.fullmatch(r"[\w.-]+", upd[k])):
+            raise Invalid(f"{k} - имя направления")
     for k in ("note", "goal", "questions"):
         if k in upd and not isinstance(upd[k], str):
             raise Invalid(f"{k} - строка")
@@ -44,12 +48,12 @@ def parse(text, projects):
         if not all(x["text"] for x in upd["next"]):
             raise Invalid("пустой пункт в next")
     if len(upd) == 1:
-        raise Invalid("нечего менять: stage, note, goal, next, add, done, undone, questions")
+        raise Invalid("нечего менять: stage, note, goal, next, add, done, undone, questions, link, unlink")
     return upd
 
 
 def empty():
-    return {"stage": None, "note": "", "goal": "", "next": [], "questions": "", "updated": None, "by": None, "history": []}
+    return {"stage": None, "note": "", "goal": "", "next": [], "questions": "", "links": [], "updated": None, "by": None, "history": []}
 
 
 def _find(items, text):
@@ -71,6 +75,13 @@ def apply(mem, upd, by, ts):
     if "next" in upd and upd["next"] != mem["next"]:
         mem["next"] = upd["next"]
         what.append(f"«Что дальше» переписано, пунктов: {len(mem['next'])}")
+    links = mem.setdefault("links", [])
+    if upd.get("link") and upd["link"] not in links:
+        links.append(upd["link"])
+        what.append(f"направление {upd['link']} привязано")
+    if upd.get("unlink") in links:
+        links.remove(upd["unlink"])
+        what.append(f"направление {upd['unlink']} отвязано")
     for t in upd.get("add") or []:
         if not _find(mem["next"], t):
             mem["next"].append({"text": t.strip(), "done": False})

@@ -75,40 +75,75 @@ def directions(root):
     return out
 
 
-def collect(state_dir, projects, memories):
-    """-> {projects: [...]} для страницы. Проект и направление связаны путём репо (direction.json repo)."""
-    dirs = directions(os.path.join(state_dir, "directions"))
-    by_repo = {}
+def merge(boards):
+    """Доска проекта из нескольких живых направлений: счёт сложен, задачи и решения вперемешку, новые первыми."""
+    if len(boards) == 1:
+        return boards[0]
+    done = sorted((d for b in boards for d in b["done"]), key=lambda d: d["date"], reverse=True)
+    decisions = sorted((d for b in boards for d in b["decisions"]), key=lambda d: d["date"], reverse=True)
+    return {"repo": boards[0]["repo"], "created": boards[0]["created"], "archived": False,
+            "counts": {s: sum(b["counts"][s] for b in boards) for s in STATUSES},
+            "doing": [t for b in boards for t in b["doing"]][:3], "done": done[:8], "decisions": decisions[:5],
+            "decisions_total": sum(b["decisions_total"] for b in boards), "changed": max(b["changed"] or 0 for b in boards) or None}
+
+
+def owners(dirs, projects, memories):
+    """Направление -> проект: привязанное вручную (links в памяти проекта) или по репо (самая глубокая папка проекта)."""
+    out = {}
+    paths = {name: real(p.get("path")) for name, p in projects.items() if p.get("path")}
     for slug, d in dirs.items():
-        if d["repo"]:
-            by_repo.setdefault(d["repo"], []).append((slug, d))
+        repo = d["repo"]
+        hits = [n for n, path in paths.items() if repo and (repo == path or repo.startswith(path.rstrip(os.sep) + os.sep))]
+        if hits:
+            out[slug] = max(hits, key=lambda n: len(paths[n]))
+    for name, m in memories.items():
+        for slug in (m or {}).get("links") or []:
+            if name in projects and slug in dirs:
+                out[slug] = name
+    return out
+
+
+def collect(state_dir, projects, memories):
+    """-> {projects: [...]} для страницы. Направление - проекта, чью папку оно правит (direction.json repo), или
+    привязанное к проекту вручную; живое направление без проекта - само проект."""
+    dirs = directions(os.path.join(state_dir, "directions"))
+    owner = owners(dirs, projects, memories)
     out = []
     for name, p in projects.items():
         path = real(p.get("path"))
-        mine = sorted(by_repo.get(path, []), key=lambda x: (x[1]["archived"], -(x[1]["changed"] or 0)))
+        mine = sorted(((s, d) for s, d in dirs.items() if owner.get(s) == name),
+                      key=lambda x: (x[1]["archived"], -(x[1]["changed"] or 0)))
+        live = [d for _, d in mine if not d["archived"]]
         slug, d = mine[0] if mine else (None, None)
         out.append({"name": name, "about": p.get("about") or "", "path": p.get("path"),
-                    "exists": bool(path and os.path.isdir(path)), "direction": slug, "board": d,
+                    "exists": bool(path and os.path.isdir(path)), "direction": slug, "board": merge(live) if live else d,
+                    "directions": [{"slug": s, "linked": s in ((memories.get(name) or {}).get("links") or []),
+                                    "board": b} for s, b in mine],
                     "memory": memories.get(name)})
-    linked = {o["direction"] for o in out}
-    for slug, d in sorted(dirs.items()):   # живое направление, чьей папки нет в hub projects, - тоже проект
-        if slug not in linked and not d["archived"] and slug not in projects:
+    for slug, d in sorted(dirs.items()):   # живое направление без проекта - тоже проект
+        if slug not in owner and not d["archived"] and slug not in projects:
             out.append({"name": slug, "about": "", "path": d["repo"], "exists": bool(d["repo"] and os.path.isdir(d["repo"])),
-                        "direction": slug, "board": d, "memory": memories.get(slug), "unlisted": True})
+                        "direction": slug, "board": d, "directions": [{"slug": slug, "linked": False, "board": d}],
+                        "memory": memories.get(slug), "unlisted": True})
     homes = task_homes(state_dir, projects, out)
     for o in out:
-        o["tasks"] = tasks.read_all(homes[o["name"]])
-        o["tasks_home"] = o["direction"] if o["board"] and not o["board"]["archived"] else None
-    return {"projects": out, "general": tasks.read_all(homes[tasks.GENERAL])}
+        h = homes[o["name"]]
+        o["tasks"] = [{**t, "home": key or None} for key, path in h["paths"].items() for t in tasks.read_all(path)]
+        o["tasks_home"] = h["default"] or None
+        o["homes"] = [k for k in h["paths"] if k]
+    return {"projects": out, "general": tasks.read_all(homes[tasks.GENERAL]["paths"][""]),
+            "free": sorted(s for s, d in dirs.items() if not d["archived"] and s not in owner)}
 
 
-def task_homes(state_dir, projects, listed=None):
-    """Куда идут задачи проекта: бэклог живого направления, без него - свой бэклог рядом с памятью проекта."""
-    out = {tasks.GENERAL: os.path.join(state_dir, "projects-memory", "_general", "backlog")}
-    for p in listed if listed is not None else collect(state_dir, projects, {})["projects"]:
-        live = p["board"] and not p["board"]["archived"]
-        out[p["name"]] = (os.path.join(state_dir, "directions", p["direction"], "backlog") if live else
-                          os.path.join(state_dir, "projects-memory", p["name"], "backlog"))
+def task_homes(state_dir, projects, listed=None, memories=None):
+    """Куда идут задачи проекта: свой бэклог рядом с памятью проекта ("") и бэклоги его живых направлений; по умолчанию -
+    бэклог единственного живого направления, иначе свой."""
+    out = {tasks.GENERAL: {"default": "", "paths": {"": os.path.join(state_dir, "projects-memory", "_general", "backlog")}}}
+    for p in listed if listed is not None else collect(state_dir, projects, memories or {})["projects"]:
+        live = [d["slug"] for d in p["directions"] if not d["board"]["archived"]]
+        paths = {"": os.path.join(state_dir, "projects-memory", p["name"], "backlog")}
+        paths.update({s: os.path.join(state_dir, "directions", s, "backlog") for s in live})
+        out[p["name"]] = {"default": live[0] if len(live) == 1 else "", "paths": paths}
     return out
 
 
