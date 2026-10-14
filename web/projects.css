@@ -76,6 +76,8 @@
 .pst .pc { display: grid; gap: var(--space-5); max-width: 1180px; padding: var(--space-2) var(--space-3) var(--space-8); }
 .pst .pc-back { color: var(--muted-foreground); font-size: var(--text-sm); display: flex; align-items: center; gap: 6px; }
 .pst .pc-head { display: flex; align-items: flex-start; gap: 16px; }
+.pst .pc-head > div { min-width: 0; }
+.pst .pc-meta .mono { overflow-wrap: anywhere; min-width: 0; }
 .pst .pc-head h1 { margin: 0; font-size: var(--text-xl); font-weight: 650; }
 .pst .pc-head .ab { color: var(--muted-foreground); margin-top: 4px; font-size: var(--text-sm); }
 .pst .pc-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; font-size: var(--text-xs); color: var(--muted-foreground); }
@@ -114,6 +116,7 @@
 .pst .links { display: grid; gap: 6px; font-size: var(--text-xs); }
 .pst .links div { display: grid; grid-template-columns: 70px 1fr; gap: 10px; }
 .pst .links .k { color: var(--muted-foreground); }
+.pst .links .mono { overflow-wrap: anywhere; }
 .pst .empty-dir { display: grid; gap: 10px; font-size: var(--text-sm); color: var(--muted-foreground); }
 .pst .note-k { font-size: var(--text-xs); color: var(--muted-foreground); }
 .pst .card, .pst .fin, .pst .tag.go { cursor: pointer; }
