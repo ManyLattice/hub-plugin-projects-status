@@ -47,7 +47,7 @@ def board(path):
         if st == "In Progress":
             doing.append((field(text, "ordinal") or "", field(text, "title") or os.path.basename(f)))
         elif st == "Done":
-            done.append({"title": field(text, "title") or os.path.basename(f),
+            done.append({"id": (field(text, "id") or "").upper(), "title": field(text, "title") or os.path.basename(f),
                          "date": field(text, "updated_date") or field(text, "created_date") or "",
                          "ordinal": float(field(text, "ordinal") or 0)})
         last = max(last, os.path.getmtime(f))
@@ -57,7 +57,7 @@ def board(path):
         decisions.append({"title": field(text, "title") or os.path.basename(f), "date": field(text, "date") or ""})
         last = max(last, os.path.getmtime(f))
     decisions.sort(key=lambda d: d["date"], reverse=True)
-    done = [{"title": d["title"], "date": d["date"]} for d in sorted(done, key=lambda d: (d["date"], d["ordinal"]), reverse=True)]
+    done = [{"id": d["id"], "title": d["title"], "date": d["date"]} for d in sorted(done, key=lambda d: (d["date"], d["ordinal"]), reverse=True)]
     return {"repo": real(meta.get("repo")), "created": meta.get("created"), "counts": counts,
             "doing": [t for _, t in sorted(doing)][:3], "done": done[:8], "decisions": decisions[:5], "decisions_total": len(decisions),
             "changed": last or None}

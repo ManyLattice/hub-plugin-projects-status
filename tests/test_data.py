@@ -47,6 +47,8 @@ class Data(unittest.TestCase):
         b = data.board(os.path.join(self.root, "state", "directions", "app-redesign"))
         self.assertEqual([(d["title"], d["date"]) for d in b["done"]],
                          [("Срез 5: виджет", "2026-10-12 14:05"), ("Срез 4: оплата", "2026-10-11 09:30"), ("Срез 1", "")])
+        # номер - чтобы «Что изменилось» не показало закрытие задачи дважды: из истории карточки и с доски
+        self.assertEqual([d["id"] for d in b["done"]], ["TASK-5", "TASK-4", "TASK-1"])
 
     def test_a_long_yaml_title_is_read_whole(self):
         self.assertEqual(data.field("title: >-\n  Разбор: почему бот\n  выходит из канала\nstatus: To Do\n", "title"),
