@@ -69,7 +69,8 @@ def show(name):
         if name not in known:
             sys.exit(f"нет проекта {name} (hub projects)")
         print(open(path, encoding="utf-8").read() if os.path.exists(path) else
-              f"У {name} памяти ещё нет. Заполнить: python3 {HERE}/pmem.py set {name} --stage … --goal …")
+              f"У {name} памяти ещё нет. Этап и что дальше: python3 {HERE}/pmem.py set {name} --stage … --note … --add …"
+              " (цель - только со слов владельца)")
         return
     mems = memories(state)
     for n in known:

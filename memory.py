@@ -116,5 +116,5 @@ def render_md(name, about, mem):
         out += ["", "## Открытые вопросы", mem["questions"]]
     if mem["history"]:
         out += ["", "## История"] + [f"- {at(h['ts'])} {who(h['by'])}: {h['what']}" for h in mem["history"][-10:][::-1]]
-    out += ["", f"Править: python3 {{plugin}}/pmem.py set {name} --stage … --note … --goal … --add … --done …"]
+    out += ["", f"Править: python3 {{plugin}}/pmem.py set {name} --stage … --note … --add … --done … (--goal - только со слов владельца)"]
     return "\n".join(out) + "\n"
