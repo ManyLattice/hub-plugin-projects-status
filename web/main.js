@@ -6,7 +6,7 @@ const el = (...a) => hub.el(...a);
 const PLUGIN = "projects-status";
 const STAGES = ["Кандидат", "Разработка", "К релизу", "В сторе", "Пауза", "Готово"];
 const KIND = { "Разработка": "work", "К релизу": "rel", "В сторе": "rel", "Пауза": "rest", "Готово": "ok" };
-const FILTERS = [["all", "Все"], ["dir", "С направлением"], ["wait", "Ждут вас"], ["nodir", "Без направления"]];
+const FILTERS = [["all", "Все"], ["dir", "С направлением"], ["wait", "Ждут вас"], ["push", "Не запушено"], ["nodir", "Без направления"]];
 
 let data = null, error = "", timer = null, filter = "all", open = null, editing = null, saving = false;
 let tab = "mem", draft = null, expanded = null;   // вкладка карточки, форма новой задачи, раскрытая задача
@@ -301,7 +301,9 @@ function listView(snap) {
   top.append(h, el("span", "ps-sp"));
   if (!draft) top.append(add);
   const chips = el("div", "chips");
-  const counts = { all: data.projects.length, dir: g.go.length + g.done.filter((p) => p.board).length, wait: g.wait.length + g.mine.length, nodir: g.rest.length };
+  const ups = data.projects.filter((p) => unpushedRepos(p).length);
+  const counts = { all: data.projects.length, dir: g.go.length + g.done.filter((p) => p.board).length, wait: g.wait.length + g.mine.length,
+    push: ups.length, nodir: g.rest.length };
   for (const [k, t] of FILTERS) {
     const c = el("button", "pchip", t); c.type = "button"; c.setAttribute("aria-pressed", String(filter === k));
     c.append(el("span", "n", String(counts[k])));
@@ -361,6 +363,18 @@ function listView(snap) {
     row.addEventListener("click", () => openCard(general(), "tasks"));
     list.append(row);
     box.append(sec("Задачи без проекта", genOpen), list);
+  }
+  if (ups.length && show("push")) {
+    const list = el("div", "wb");
+    const local = (p) => unpushedRepos(p).every((r) => r.unpushed === null);
+    for (const p of [...ups].sort((a, b) => local(a) - local(b))) {
+      const row = el("div", "fin up"), rs = unpushedRepos(p);
+      row.append(el("span", "nm", title(p)), el("span", local(p) ? "br mut" : "br", rs.map((r) => aheadText(r, (p.repos || []).length > 1)).join(" · ")), el("span", "ps-sp"),
+        el("span", "mut num", ago(Math.max(0, ...rs.map((r) => r.latest || 0)))));
+      row.addEventListener("click", () => openCard(p));
+      list.append(row);
+    }
+    box.append(sec("Не запушено", ups.length, el("span", "ps-sp"), el("span", "mut", "коммиты, которых нет на сервере")), list);
   }
   if (g.go.length && show("dir")) {
     const cards = el("div", "cards");
@@ -431,9 +445,9 @@ function card(p) {
   const ft = el("div", "ft");
   ft.append(el("span", "dirn", dirNames(p)), el("span", "ps-sp"));
   if (p.wait) ft.append(el("span", "wtag", "ждёт вас"), " · ");
-  const cold = stale(hub.snapshot() || {}, p), up = (p.repos || []).reduce((n, r) => n + (r.unpushed || 0), 0);
+  const cold = stale(hub.snapshot() || {}, p), up = unpushedRepos(p).flatMap((r) => r.ahead || []);
   if (cold) ft.append(el("span", "wtag", `застыл ${cold} дн`), " · ");
-  else if (up) ft.append(el("span", null, `не запушено ${up}`), " · ");
+  if (up.length) ft.append(el("span", null, up.length > 1 ? `не запушено в ${many_(up.length, "ветке", "ветках", "ветках")}` : `не запушено ${up[0].n}`), " · ");
   ft.append(el("span", "num", ago(Math.max(p.board.changed || 0, m.updated || 0))));
   c.append(ft);
   c.addEventListener("click", () => openCard(p));
@@ -651,8 +665,18 @@ function stale(snap, p) {   // дней без коммитов у проект�
   const d = Math.floor((Date.now() / 1000 - a) / 86400);
   return d >= STALE_DAYS ? d : 0;
 }
+const unpushedRepos = (p) => (p.repos || []).filter((r) => r.unpushed === null || (r.ahead || []).length);
+const AHEAD_SHOWN = 3;
+const branchText = (b) => `${b.branch}: ${many_(b.n, "коммит", "коммита", "коммитов")}${b.pushed ? "" : " (ветки нет на сервере)"}`;
+function aheadText(r, named) {
+  const pre = named ? `${r.name} / ` : "";
+  if (r.unpushed === null) return `${pre}нет удалённого репо`;
+  const a = r.ahead || [], more = a.length - AHEAD_SHOWN;
+  return pre + a.slice(0, AHEAD_SHOWN).map(branchText).join(", ") + (more > 0 ? ` и ещё ${many_(more, "ветка", "ветки", "веток")}` : "");
+}
 function repoFlags(r) {
-  return [r.unpushed ? `${many_(r.unpushed, "коммит", "коммита", "коммитов")} не запушено` : "",
+  const a = r.ahead || [];
+  return [a.length ? "не запушено: " + a.map(branchText).join(", ") : "",
     r.dirty ? `${many_(r.dirty, "файл", "файла", "файлов")} не закоммичено` : ""].filter(Boolean);
 }
 const reviewsUrl = (r) => (r.web ? r.web + (r.kind === "gitlab" ? "/-/merge_requests" : "/pulls") : "");

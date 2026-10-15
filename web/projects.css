@@ -67,12 +67,15 @@
 .pst .card ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: var(--text-xs); color: var(--muted-foreground); }
 .pst .card ul li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pst .card ul li::before { content: "▸ "; color: var(--primary); }
-.pst .card .ft { display: flex; align-items: center; gap: 8px; font-size: var(--text-xs); color: var(--muted-foreground); border-top: 1px solid var(--border); padding-top: 10px; }
+.pst .card .ft { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: var(--text-xs); color: var(--muted-foreground); border-top: 1px solid var(--border); padding-top: 10px; }
 .pst .card.wait { border-color: color-mix(in oklch, var(--warning) 40%, transparent); }
 .pst .card .wtag { font-size: var(--text-xs); color: var(--warning); font-weight: 500; }
 .pst .card.dim { opacity: .72; }
 .pst .fin { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-size: var(--text-sm); }
 .pst .fin .nm { font-weight: 600; }
+.pst .fin.up .nm { flex: none; }
+.pst .card .ft > span { white-space: nowrap; }
+.pst .fin.up .br { min-width: 0; overflow-wrap: anywhere; }
 .pst .pc { display: grid; gap: var(--space-5); max-width: 1180px; padding: var(--space-2) var(--space-3) var(--space-8); }
 .pst .pc-back { color: var(--muted-foreground); font-size: var(--text-sm); display: flex; align-items: center; gap: 6px; }
 .pst .pc-head { display: flex; align-items: flex-start; gap: 16px; }
