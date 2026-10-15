@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 
-GIT_EVERY, REVIEWS_EVERY = 60, 600
+GIT_EVERY, REVIEWS_EVERY, BRANCHES = 60, 600, 30
 TOOLS = {"github": "gh", "gitlab": "glab"}
 
 
@@ -47,13 +47,31 @@ def web(url):
     return kind, f"https://{host}/{path}"
 
 
+def ahead(root, current):
+    """Локальные ветки с коммитами, которых нет ни в одной удалённой: текущая первой, потом по числу коммитов.
+    Ветка, чья удалённая удалена (обычно после слияния), не в счёт."""
+    out, remote = [], {r.split("/", 1)[-1] for r in (git(root, "for-each-ref", "--format=%(refname:short)", "refs/remotes") or "").split()}
+    refs = (git(root, "for-each-ref", "--sort=-committerdate", "--count", str(BRANCHES),
+                "--format=%(refname:short)%00%(upstream)%00%(upstream:track)", "refs/heads") or "").splitlines()
+    for line in refs:
+        name, up, track = (line.split("\x00") + ["", ""])[:3]
+        if up and "gone" in track:
+            continue
+        n = git(root, "rev-list", "--count", name, "--not", "--remotes")
+        if n and n.isdigit() and int(n):
+            out.append({"branch": name, "n": int(n), "pushed": bool(up) or name in remote})
+    return sorted(out, key=lambda b: (b["branch"] != current, -b["n"]))
+
+
 def state(root):
     head = (git(root, "log", "-1", "--format=%h%x00%s%x00%ct") or "").split("\x00")
     branches = (git(root, "for-each-ref", "--sort=-committerdate", "--format=%(committerdate:unix)", "refs/heads") or "").split()
     origin = git(root, "remote", "get-url", "origin")
     unpushed = git(root, "rev-list", "--count", "HEAD", "--not", "--remotes") if git(root, "remote") else None
     kind, url = web(origin)
-    return {"root": root, "name": os.path.basename(root), "branch": git(root, "branch", "--show-current") or "",
+    branch = git(root, "branch", "--show-current") or ""
+    return {"root": root, "name": os.path.basename(root), "branch": branch,
+            "ahead": ahead(root, branch) if unpushed is not None else [],
             "head": {"hash": head[0], "subject": head[1], "ts": int(head[2])} if len(head) == 3 else None,
             "latest": int(branches[0]) if branches else None, "branches": len(branches),
             "unpushed": int(unpushed) if unpushed and unpushed.isdigit() else None,

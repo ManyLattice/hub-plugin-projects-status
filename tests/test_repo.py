@@ -64,6 +64,27 @@ class Repo(unittest.TestCase):
         self.assertEqual((s["branch"], s["head"]["subject"], s["unpushed"]), ("main", "Первый", 0))
         self.assertEqual(s["branches"], 2)
 
+    def test_unpushed_branches_current_first_merged_ones_skipped(self):
+        git(self.app, "checkout", "-q", "-b", "feature/pay")
+        commit(self.app, "b.txt", "Оплата")
+        commit(self.app, "c.txt", "Оплата 2")
+        git(self.app, "push", "-q", "-u", "origin", "feature/pay")
+        commit(self.app, "d.txt", "Оплата 3")
+        git(self.app, "checkout", "-q", "-b", "feature/merged")
+        git(self.app, "push", "-q", "-u", "origin", "feature/merged")
+        commit(self.app, "e.txt", "После слияния")
+        git(self.app, "push", "-q", "origin", "--delete", "feature/merged")
+        git(self.app, "fetch", "-q", "--prune")
+        git(self.app, "checkout", "-q", "main")
+        git(self.app, "checkout", "-q", "-b", "feature/new")
+        commit(self.app, "n1.txt", "Новое")
+        commit(self.app, "n2.txt", "Новое 2")
+        git(self.app, "checkout", "-q", "main")
+        commit(self.app, "m.txt", "На main")
+        self.assertEqual(repo.state(self.app)["ahead"], [{"branch": "main", "n": 1, "pushed": True},
+                                                         {"branch": "feature/new", "n": 2, "pushed": False},
+                                                         {"branch": "feature/pay", "n": 1, "pushed": True}])
+
     def test_repo_without_remote_has_no_unpushed_count(self):
         git(self.app, "remote", "remove", "origin")
         s = repo.state(self.app)
