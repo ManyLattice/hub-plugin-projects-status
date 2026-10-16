@@ -3,8 +3,10 @@
 бэклог проекта рядом с его памятью. Задачи без проекта (project "-") - в общем бэклоге владельца.
 
 Правка - пост в канал плагина, как правка памяти: {"task": "create", "project", "title", ["direction", "description",
-"type", "priority", "assignee", "due"]} или {"task": "status", "project", "id", "status", ["direction"]}. direction - в
-какой бэклог: направление проекта или "" (свой); нет его - бэклог по умолчанию (data.task_homes)."""
+"type", "priority", "assignee", "due"]}, {"task": "status", "project", "id", "status", ["direction"]}, {"task": "edit",
+"project", "id", ["direction"] + любые поля create и status (пустая строка стирает поле)} или {"task": "delete", "project",
+"id", ["direction"]} - задача уходит в архив бэклога (archive/tasks, как `backlog task archive`). direction - в какой
+бэклог: направление проекта или "" (свой); нет его - бэклог по умолчанию (data.task_homes)."""
 import datetime
 import glob
 import os
@@ -24,38 +26,59 @@ class Invalid(ValueError):
     pass
 
 
+FIELDS = ("title", "description", "type", "priority", "assignee", "due")
+NAMES = {"title": "название", "description": "описание", "type": "тип", "priority": "приоритет", "assignee": "исполнитель",
+         "due": "срок", "status": "статус"}
+
+
+def task_id(op):
+    if not re.fullmatch(r"(?i)task-\d+", str(op.get("id") or "")):
+        raise Invalid("id - вида TASK-12")
+    return op["id"].upper()
+
+
+def fields(op, allowed):
+    extra = set(op) - {"task", "project", "direction", *allowed}
+    if extra:
+        raise Invalid(f"неизвестные поля: {', '.join(sorted(extra))}")
+    if not all(isinstance(op.get(k, ""), str) for k in ("direction", *allowed)):
+        raise Invalid("поля задачи - строки")
+    if "title" in op:
+        op = {**op, "title": " ".join(op["title"].split())}
+        if not op["title"]:
+            raise Invalid("у задачи нет названия")
+    if op.get("status") and op["status"] not in STATUSES or "status" in op and not op["status"]:
+        raise Invalid(f"статус - один из: {', '.join(STATUSES)}")
+    if op.get("priority") and op["priority"] not in PRIORITIES:
+        raise Invalid(f"приоритет - один из: {', '.join(PRIORITIES)}")
+    if op.get("type") and op["type"] not in TYPES:
+        raise Invalid(f"тип - один из: {', '.join(TYPES)}")
+    if op.get("due") and not re.fullmatch(r"\d{4}-\d\d-\d\d", op["due"]):
+        raise Invalid("срок - ГГГГ-ММ-ДД")
+    if op.get("assignee") and not re.fullmatch(r"[\w.-]+", op["assignee"]):
+        raise Invalid("исполнитель - имя сессии или owner")
+    return op
+
+
 def parse(op):
     """Пост {"task": …} -> проверенная правка; не годится - Invalid с причиной."""
     kind = op.get("task")
     if kind == "create":
-        extra = set(op) - {"task", "project", "direction", "title", "description", "type", "priority", "assignee", "due"}
-        if extra:
-            raise Invalid(f"неизвестные поля: {', '.join(sorted(extra))}")
-        if not all(isinstance(op.get(k, ""), str) for k in ("direction", "title", "description", "type", "priority", "assignee", "due")):
-            raise Invalid("поля задачи - строки")
-        op = {**op, "title": " ".join(op.get("title", "").split())}
-        if not op["title"]:
-            raise Invalid("у задачи нет названия")
-        if op.get("priority") and op["priority"] not in PRIORITIES:
-            raise Invalid(f"приоритет - один из: {', '.join(PRIORITIES)}")
-        if op.get("type") and op["type"] not in TYPES:
-            raise Invalid(f"тип - один из: {', '.join(TYPES)}")
-        if op.get("due") and not re.fullmatch(r"\d{4}-\d\d-\d\d", op["due"]):
-            raise Invalid("срок - ГГГГ-ММ-ДД")
-        if op.get("assignee") and not re.fullmatch(r"[\w.-]+", op["assignee"]):
-            raise Invalid("исполнитель - имя сессии или owner")
-        return op
+        return fields({**op, "title": op.get("title", "")}, FIELDS)
     if kind == "status":
         if set(op) - {"task", "project", "direction", "id", "status"}:
             raise Invalid("status: только project, direction, id, status")
-        if not isinstance(op.get("direction", ""), str):
-            raise Invalid("direction - строка")
-        if op.get("status") not in STATUSES:
-            raise Invalid(f"статус - один из: {', '.join(STATUSES)}")
-        if not re.fullmatch(r"(?i)task-\d+", str(op.get("id") or "")):
-            raise Invalid("id - вида TASK-12")
-        return {**op, "id": op["id"].upper()}
-    raise Invalid("task - create или status")
+        return {**fields({**op, "status": op.get("status") or ""}, ("id", "status")), "id": task_id(op)}
+    if kind == "edit":
+        op = {**fields(op, ("id", "status", *FIELDS)), "id": task_id(op)}
+        if not set(op) & {"status", *FIELDS}:
+            raise Invalid("edit: нечего менять")
+        return op
+    if kind == "delete":
+        if set(op) - {"task", "project", "direction", "id"}:
+            raise Invalid("delete: только project, direction, id")
+        return {**fields(op, ("id",)), "id": task_id(op)}
+    raise Invalid("task - create, status, edit или delete")
 
 
 def now():
@@ -115,16 +138,55 @@ def path_of(base, tid):
     return found[0]
 
 
-def set_status(base, tid, status):
+def _put(lines, key, new):
+    """Поле шапки key (со строками списка под ним) -> строки new на его месте; нет поля - перед ordinal или в конец."""
+    at = next((i for i, ln in enumerate(lines) if ln.startswith(f"{key}:")), None)
+    if at is None:
+        at = next((i for i, ln in enumerate(lines) if ln.startswith("ordinal:")), len(lines))
+    else:
+        end = at + 1
+        while end < len(lines) and re.match(r"[ \t]+- ", lines[end]):
+            end += 1
+        del lines[at:end]
+    lines[at:at] = new
+
+
+DESC = re.compile(r"\n?## Description\n\n<!-- SECTION:DESCRIPTION:BEGIN -->\n.*?\n<!-- SECTION:DESCRIPTION:END -->\n", re.S)
+
+
+def edit(base, tid, op):
+    """Правка полей задачи: есть ключ - поле переписано, пустая строка - поле стёрто; описание - в своей секции."""
     path = path_of(base, tid)
-    text = read(path)
-    _, head, body = text.split("---\n", 2)
-    lines = [ln for ln in head.splitlines() if not ln.startswith("updated_date:")]
-    lines = [f"status: {status}" if ln.startswith("status:") else ln for ln in lines]
+    _, head, body = read(path).split("---\n", 2)
+    lines = head.splitlines()
+    for key, field_, make in (("title", "title", lambda v: [f"title: {quote(v)}"]),
+                              ("status", "status", lambda v: [f"status: {v}"]),
+                              ("assignee", "assignee", lambda v: ["assignee:", f"  - '@{v}'"] if v else ["assignee: []"]),
+                              ("due", "due_date", lambda v: [f"due_date: '{v}'"] if v else []),
+                              ("priority", "priority", lambda v: [f"priority: {v}"] if v else []),
+                              ("type", "type", lambda v: [f"type: {v}"] if v else [])):
+        if key in op:
+            _put(lines, field_, make(op[key]))
+    _put(lines, "updated_date", [])
     at = next((i for i, ln in enumerate(lines) if ln.startswith("created_date:")), len(lines) - 1)
     lines.insert(at + 1, f"updated_date: '{now()}'")
+    if "description" in op:
+        text = op["description"].strip()
+        section = f"\n## Description\n\n<!-- SECTION:DESCRIPTION:BEGIN -->\n{text}\n<!-- SECTION:DESCRIPTION:END -->\n" if text else ""
+        body = DESC.sub(lambda _: section, body, count=1) if DESC.search(body) else section + body
     with open(path, "w", encoding="utf-8") as f:
         f.write("---\n" + "\n".join(lines) + "\n---\n" + body)
+
+
+def set_status(base, tid, status):
+    edit(base, tid, {"status": status})
+
+
+def delete(base, tid):
+    """В архив бэклога: из доски уходит, файл и номер остаются."""
+    path = path_of(base, tid)
+    os.makedirs(os.path.join(base, "archive", "tasks"), exist_ok=True)
+    os.replace(path, os.path.join(base, "archive", "tasks", os.path.basename(path)))
 
 
 def _list(head, key):

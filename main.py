@@ -90,8 +90,15 @@ def task(op, base):
         tid = tasks.create(base, op)
         who = memory.who(op.get("assignee")) if op.get("assignee") else ""
         return f"задача {tid} «{op['title'][:80]}» заведена" + (f", исполнитель - {who}" if who else "")
-    tasks.set_status(base, op["id"], op["status"])
-    return f"задача {op['id']}: {tasks.STATUSES[op['status']]}"
+    if op["task"] == "status":
+        tasks.set_status(base, op["id"], op["status"])
+        return f"задача {op['id']}: {tasks.STATUSES[op['status']]}"
+    if op["task"] == "delete":
+        title = next((t["title"] for t in tasks.read_all(base) if t["id"] == op["id"]), "")
+        tasks.delete(base, op["id"])
+        return f"задача {op['id']} «{title[:80]}» удалена (лежит в архиве бэклога)"
+    tasks.edit(base, op["id"], op)
+    return f"задача {op['id']} изменена: " + ", ".join(tasks.NAMES[k] for k in tasks.NAMES if k in op)
 
 
 def follow(st):

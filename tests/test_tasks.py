@@ -40,6 +40,31 @@ class Tasks(unittest.TestCase):
         with self.assertRaises(tasks.Invalid):
             tasks.set_status(self.base, "TASK-9", "Done")
 
+    def test_an_edit_rewrites_the_given_fields_and_clears_the_empty_ones(self):
+        tid = tasks.create(self.base, {"title": "Экран оплаты", "description": "Apple Pay", "assignee": "app-dev",
+                                       "priority": "high", "due": "2026-10-20"})
+        tasks.edit(self.base, tid, {"title": "Экран оплаты: Google Pay", "description": "Google Pay\nи Apple Pay",
+                                    "assignee": "owner", "due": "", "type": "bug", "status": "In Progress"})
+        [t] = tasks.read_all(self.base)
+        self.assertEqual((t["title"], t["description"], t["assignee"], t["due"], t["type"], t["priority"], t["status"]),
+                         ("Экран оплаты: Google Pay", "Google Pay\nи Apple Pay", "owner", None, "bug", "high", "In Progress"))
+        self.assertTrue(t["updated"])
+        tasks.edit(self.base, tid, {"description": "", "assignee": ""})
+        [t] = tasks.read_all(self.base)
+        self.assertEqual((t["description"], t["assignee"], t["title"]), ("", None, "Экран оплаты: Google Pay"))
+        tasks.edit(self.base, tid, {"description": "Снова"})
+        self.assertEqual(tasks.read_all(self.base)[0]["description"], "Снова")
+
+    def test_a_deleted_task_moves_to_the_backlog_archive(self):
+        tid = tasks.create(self.base, {"title": "Лишняя"})
+        tasks.create(self.base, {"title": "Нужная"})
+        tasks.delete(self.base, tid)
+        self.assertEqual([t["title"] for t in tasks.read_all(self.base)], ["Нужная"])
+        self.assertEqual(os.listdir(os.path.join(self.base, "archive", "tasks")), ["task-1 - Лишняя.md"])
+        self.assertEqual(tasks.create(self.base, {"title": "Третья"}), "TASK-3")    # номер архивной не занимаем снова
+        with self.assertRaises(tasks.Invalid):
+            tasks.delete(self.base, tid)
+
     def test_ops_are_checked_before_they_touch_files(self):
         ok = tasks.parse({"task": "create", "project": "app", "title": " Иконка ", "priority": "low"})
         self.assertEqual(ok["title"], "Иконка")
@@ -47,6 +72,11 @@ class Tasks(unittest.TestCase):
                     {"task": "create", "project": "app", "title": "x", "priority": "срочно"},
                     {"task": "create", "project": "app", "title": "x", "due": "завтра"},
                     {"task": "status", "project": "app", "id": "TASK-1", "status": "Отложено"},
+                    {"task": "edit", "project": "app", "id": "TASK-1", "title": "  "},
+                    {"task": "edit", "project": "app", "id": "TASK-1", "status": "Отложено"},
+                    {"task": "edit", "project": "app", "id": "TASK-1", "color": "red"},
+                    {"task": "edit", "project": "app", "id": "1", "title": "x"},
+                    {"task": "delete", "project": "app", "id": "TASK-1", "title": "x"},
                     {"task": "drop", "project": "app"}):
             with self.assertRaises(tasks.Invalid):
                 tasks.parse(bad)
@@ -92,6 +122,17 @@ class Fold(unittest.TestCase):
                          ["задача TASK-1 «Зарегистрироваться в сервисе» заведена, исполнитель - владелец", "задача TASK-1: В работе"])
         [t] = data.collect(self.state, self.cfg, {})["general"]
         self.assertEqual((t["title"], t["status"], t["assignee"]), ("Зарегистрироваться в сервисе", "In Progress", "owner"))
+
+    def test_edit_and_delete_land_in_the_card_history(self):
+        st = {"last": 0, "projects": {}, "refused": []}
+        homes = data.task_homes(self.state, self.cfg)
+        main.fold(st, [post(1, "owner", task="create", project="where", title="Подписка"),
+                       post(2, "owner", task="edit", project="where", id="TASK-1", title="Подписка Google Play", priority="high"),
+                       post(3, "owner", task="delete", project="where", id="task-1")], set(self.cfg), homes)
+        self.assertEqual(st["refused"], [])
+        self.assertEqual([h["what"] for h in st["projects"]["where"]["history"]][1:],
+                         ["задача TASK-1 изменена: название, приоритет", "задача TASK-1 «Подписка Google Play» удалена (лежит в архиве бэклога)"])
+        self.assertEqual(tasks.read_all(homes["where"]["paths"][""]), [])
 
     def test_a_status_for_a_missing_task_is_refused_with_the_reason(self):
         st = {"last": 0, "projects": {}, "refused": []}
