@@ -9,11 +9,12 @@ const KIND = { "Разработка": "work", "К релизу": "rel", "В с�
 const FILTERS = [["all", "Все"], ["dir", "С направлением"], ["wait", "Ждут вас"], ["push", "Не запушено"], ["nodir", "Без направления"]];
 
 let data = null, error = "", timer = null, filter = "all", open = null, editing = null, saving = false;
-let tab = "mem", draft = null, expanded = null;   // вкладка карточки, форма новой задачи, раскрытая задача
+let tab = "mem", draft = null;   // вкладка карточки, форма новой задачи
+let tdlg = null, tmenu = null, tdel = null;   // окно задачи, меню «⋯» карточки, подтверждение удаления
 const inputs = new Map();   // поле «написать проекту» по проекту ("" - главная): узел живёт между перерисовками
 let sent = null;
 const typing = () => [...inputs.values()].some((b) => b.node.contains(document.activeElement));
-const busy = () => editing || draft || typing();
+const busy = () => editing || draft || tdlg || tdel || typing();
 let rootRef = null;
 const chosen = new Map(), answered = new Map(), why = new Set(), own = new Set();   // ответы на карточки по request_id
 
@@ -273,7 +274,7 @@ const goSession = (name) => { location.hash = `#/s/${encodeURIComponent(name)}`;
 const GENERAL = "-";   // задачи без проекта: общий бэклог владельца
 const general = () => ({ name: GENERAL, general: true, about: "", tasks: data.general || [], tasks_home: null });
 const find = (name) => (name === GENERAL ? general() : data.projects.find((x) => x.name === name));
-const openCard = (p, to = "mem") => { open = p.name; sent = null; editing = draft = expanded = null; tab = to; draw(rootRef, hub.snapshot()); rootRef.scrollTop = 0; };
+const openCard = (p, to = "mem") => { open = p.name; sent = null; editing = draft = tdlg = tmenu = tdel = null; tab = to; draw(rootRef, hub.snapshot()); rootRef.scrollTop = 0; };
 const title = (p) => {
   if (p.general) return "Без проекта";
   const m = /^([^:]+):/.exec(p.about || "");
@@ -680,16 +681,30 @@ function repoFlags(r) {
     r.dirty ? `${many_(r.dirty, "файл", "файла", "файлов")} не закоммичено` : ""].filter(Boolean);
 }
 const reviewsUrl = (r) => (r.web ? r.web + (r.kind === "gitlab" ? "/-/merge_requests" : "/pulls") : "");
+const FM = /Mac/i.test(navigator.platform) ? "Finder" : /Win/i.test(navigator.platform) ? "Проводнике" : "файлах";
+function openBtn(path, name) {
+  const b = el("button", "btn-s", name); b.type = "button"; b.title = `Открыть ${path.replace(/^\/Users\/[^/]+/, "~")} в ${FM}`;
+  b.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      const r = await fetch(`http://${location.hostname}:${port()}/open`, { method: "POST", body: JSON.stringify({ path }) });
+      toast(r.ok ? `Открыто в ${FM}` : "Эту папку открыть нельзя");
+    } catch (err) { toast(`Процесс плагина не отвечает: ${err.message}`); }
+  });
+  return b;
+}
 function repoBox(p) {
   if (!(p.repos || []).length) return [];
-  const box = el("div", "box repo");
-  box.append(el("h3", null, "Репо"));
+  const box = el("div", "box repo"), h = el("h3", null, "Репо");
+  if (p.exists) h.append(el("span", "ps-sp"), openBtn(p.path, `Открыть в ${FM}`));
+  box.append(h);
   for (const r of p.repos) {
     const one = el("div", "rp"), top = el("div", "rp-top");
     const nm = r.web ? el("a", "ext", r.name) : el("b", null, r.name);
     if (r.web) { nm.href = r.web; nm.target = "_blank"; nm.rel = "noopener"; }
     top.append(nm, el("span", "mono mut", r.branch || "без ветки"));
     if (r.branches > 1) top.append(el("span", "mut", `· ${many_(r.branches, "ветка", "ветки", "веток")}`));
+    if (p.repos.length > 1 || !p.exists) top.append(el("span", "ps-sp"), openBtn(r.root, "папка"));
     one.append(top);
     if (r.head) { const c = el("div", "rp-c"); c.append(linked(r.head.subject), el("span", "mut", ` · ${ago(r.head.ts)} · `), el("span", "mono mut", r.head.hash)); one.append(c); }
     const flags = repoFlags(r);
@@ -732,7 +747,9 @@ function linksBox(snap, p) {
   const box = el("div", "box"), l = el("div", "links");
   box.append(el("h3", null, "Ссылки"));
   const row = (k, v) => { const d = el("div"); d.append(el("span", "k", k), v); l.append(d); };
-  row("Папка", el("span", "mono", p.exists ? p.path.replace(/^\/Users\/[^/]+/, "~") : "ещё нет"));
+  const dir = el("span", "mono", p.exists ? p.path.replace(/^\/Users\/[^/]+/, "~") : "ещё нет");
+  if (p.exists) { const v = el("span", "dirv"); v.append(dir, openBtn(p.path, FM === "файлах" ? "открыть" : FM.replace("Проводнике", "Проводник"))); row("Папка", v); }
+  else row("Папка", dir);
   if (lives(p).length) {
     const v = el("span");
     lives(p).forEach((d, i) => { const a = el("a", "mono", d.slug); a.href = `#/board/${encodeURIComponent(d.slug)}`; v.append(...(i ? [", ", a] : [a])); });
@@ -778,7 +795,7 @@ function tasksView(snap, p) {
   const out = [];
   if (draft) out.push(taskForm(snap, false));
   const box = el("div", "box"), h = el("h3", null, "Доска");
-  h.append(el("span", "ps-sp"), el("span", "src", `${home(p)} · перетащите карточку, чтобы сменить статус`));
+  h.append(el("span", "ps-sp"), el("span", "src", `${home(p)} · перетащите карточку или откройте её: правка, копирование, удаление`));
   if (!draft) {
     const add = el("button", "btn-s pr", "Новая задача"); add.type = "button";
     add.addEventListener("click", () => {
@@ -815,12 +832,17 @@ function tasksView(snap, p) {
 }
 
 function taskCard(p, t) {
-  const c = el("div", "tk" + (expanded === tkey(t) ? " open" : "") + (t.assignee === "owner" ? " me" : ""));
-  c.draggable = true;
+  const c = el("div", "tk" + (t.assignee === "owner" ? " me" : "") + (tmenu === tkey(t) ? " menu-on" : ""));
+  c.draggable = true; c.tabIndex = 0;
   c.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", tkey(t)); c.classList.add("drag"); });
   c.addEventListener("dragend", () => c.classList.remove("drag"));
-  c.addEventListener("click", () => { expanded = expanded === tkey(t) ? null : tkey(t); draw(rootRef, hub.snapshot()); });
-  c.append(el("div", "tt", t.title));
+  c.addEventListener("click", () => openTask(p, t));
+  c.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target === c) openTask(p, t); });
+  const top = el("div", "tk-top"), more = el("button", "tk-more", "⋯");
+  more.type = "button"; more.title = "Действия с задачей"; more.setAttribute("aria-label", `Действия с задачей ${t.id}`);
+  more.addEventListener("click", (e) => { e.stopPropagation(); tmenu = tmenu === tkey(t) ? null : tkey(t); draw(rootRef, hub.snapshot()); });
+  top.append(el("div", "tt", t.title), more);
+  c.append(top);
   const row = el("div", "row");
   row.append(el("span", null, t.id));
   if (many(p)) row.append(el("span", "dirn", t.home || "проект"));
@@ -830,18 +852,157 @@ function taskCard(p, t) {
   else if (t.due) row.append(el("span", overdue(t) ? "late" : null, `до ${dmy(t.due)}`));
   if (t.assignee) row.append(el("span", "who", mate(t.assignee)));
   c.append(row);
-  if (expanded === tkey(t)) {
-    if (t.description) c.append(rich("div", "desc", t.description));
-    const act = el("div", "acts");
-    for (const [st, name] of COLS) {
-      if (st === t.status) continue;
-      const b = el("button", "btn-s", name); b.type = "button";
-      b.addEventListener("click", (e) => { e.stopPropagation(); setStatus(p, t, st); });
-      act.append(b);
-    }
-    c.append(act);
-  }
+  if (tmenu === tkey(t)) c.append(taskMenu(p, t));
   return c;
+}
+
+function taskMenu(p, t) {
+  const m = el("div", "tk-menu");
+  m.setAttribute("role", "menu");
+  m.addEventListener("click", (e) => e.stopPropagation());
+  const item = (name, fn) => { const b = el("button", null, name); b.type = "button"; b.setAttribute("role", "menuitem");
+    b.addEventListener("click", () => { tmenu = null; draw(rootRef, hub.snapshot()); fn(); }); m.append(b); };
+  item("Открыть и изменить", () => openTask(p, t));
+  item("Копировать текст", () => copy(taskText(t), "Текст задачи скопирован"));
+  item("Копировать номер", () => copy(t.id, `${t.id} скопирован`));
+  for (const [st, name] of COLS) if (st !== t.status) item(`В «${name}»`, () => setStatus(p, t, st));
+  item("Удалить…", () => { tdel = { project: p.name, key: tkey(t) }; draw(rootRef, hub.snapshot()); });
+  return m;
+}
+
+// --- окно задачи, как в Jira: всё правится на месте, «Сохранить» шлёт только изменённое -----------------------------
+const TFIELDS = ["title", "description", "status", "type", "priority", "assignee", "due"];
+const taskText = (t) => [`${t.id} ${t.title}`, t.description || ""].filter(Boolean).join("\n\n");
+const taskOf = (x) => { const p = x && find(x.project); return p && [p, (p.tasks || []).find((t) => tkey(t) === x.key)]; };
+function openTask(p, t) {
+  const form = Object.fromEntries(TFIELDS.map((k) => [k, t[k] || (k === "type" ? "task" : k === "priority" ? "medium" : "")]));
+  tdlg = { project: p.name, key: tkey(t), form, orig: { ...form } };
+  tmenu = null;
+  draw(rootRef, hub.snapshot());
+  rootRef.querySelector(".tdlg .tdesc")?.focus();
+}
+const closeTask = () => { tdlg = null; error = ""; draw(rootRef, hub.snapshot()); };
+const changed = () => TFIELDS.filter((k) => (tdlg.form[k] || "").trim() !== (tdlg.orig[k] || "").trim());
+
+function taskDialog(snap) {
+  const [p, t] = taskOf(tdlg) || [];
+  if (!t) { tdlg = null; return []; }
+  const f = tdlg.form, back = el("div", "tback"), box = el("div", "tdlg");
+  box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", `${t.id} ${t.title}`);
+  back.addEventListener("click", (e) => { if (e.target === back) closeTask(); });
+  const keys = (x) => x.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); closeTask(); }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveTask(); }
+  });
+  const bind = (x, k) => { x.value = f[k]; x.addEventListener("input", () => { f[k] = x.value; mark(); }); keys(x); return x; };
+  const select = (k, opts) => { const x = el("select"); for (const [v, n] of opts) { const o = el("option", null, n); o.value = v; x.append(o); }
+    x.value = f[k]; x.addEventListener("change", () => { f[k] = x.value; mark(); }); keys(x); return x; };
+
+  const head = el("div", "td-head");
+  const tools = el("div", "td-tools");
+  const btn = (name, title, fn) => { const b = el("button", "btn-s", name); b.type = "button"; b.title = title; b.addEventListener("click", fn); tools.append(b); return b; };
+  btn("Копировать", "Номер, название и описание", () => copy(taskText({ ...t, title: f.title, description: f.description }), "Текст задачи скопирован"));
+  btn("Удалить…", "Убрать задачу с доски", () => { tdel = { project: p.name, key: tkey(t) }; draw(rootRef, hub.snapshot()); });
+  const x = el("button", "td-x", "✕"); x.type = "button"; x.setAttribute("aria-label", "Закрыть"); x.addEventListener("click", closeTask);
+  tools.append(x);
+  const id = el("button", "td-id mono", t.id); id.type = "button"; id.title = "Скопировать номер";
+  id.addEventListener("click", () => copy(t.id, `${t.id} скопирован`));
+  head.append(id, el("span", "mut", where(p, t.home)), el("span", "ps-sp"), tools);
+
+  const title_ = bind(el("textarea"), "title"); title_.className = "ttitle"; title_.rows = 1; title_.placeholder = "Название";
+  const desc = bind(el("textarea"), "description"); desc.className = "tdesc"; desc.rows = 8; desc.placeholder = "Описание: подробности и критерии приёмки";
+  const main_ = el("div", "td-main");
+  main_.append(title_, el("div", "k", "Описание"), desc);
+
+  const people = (snap.sessions || []).filter((s) => s.state !== "removed" && s.kind !== "hub").map((s) => s.name).sort();
+  if (f.assignee && f.assignee !== "owner" && !people.includes(f.assignee)) people.unshift(f.assignee);
+  const side = el("div", "td-side");
+  const fld = (k, v) => { const d = el("div", "fld"); d.append(el("div", "k", k), v); side.append(d); };
+  fld("Статус", select("status", COLS));
+  fld("Исполнитель", select("assignee", [["", "без исполнителя"], ["owner", "вы"], ...people.map((n) => [n, n])]));
+  fld("Приоритет", select("priority", Object.entries(PRIO)));
+  fld("Тип", select("type", TYPES));
+  const due = bind(el("input"), "due"); due.type = "date"; fld("Срок", due);
+  side.append(el("div", "hint", [t.created && `создана ${t.created}`, t.updated && `правка ${t.updated}`].filter(Boolean).join(" · ")));
+
+  const body = el("div", "td-body");
+  body.append(main_, side);
+  const foot = el("div", "acts");
+  const save = el("button", "btn-s pr", saving ? "Сохраняю…" : "Сохранить"); save.type = "button";
+  save.addEventListener("click", saveTask);
+  const cancel = el("button", "btn-s", "Отмена"); cancel.type = "button"; cancel.addEventListener("click", closeTask);
+  const note = el("span", "hint");
+  const mark = () => { const n = changed().length; save.disabled = saving || !n || !f.title.trim(); note.textContent = n ? "⌘↩ - сохранить, Esc - закрыть без правок" : "Esc - закрыть"; };
+  foot.append(save, cancel, note);
+  if (error) foot.append(el("span", "err", error));
+  mark();
+  box.append(head, body, foot);
+  back.append(box);
+  setTimeout(() => { title_.style.height = "auto"; title_.style.height = title_.scrollHeight + "px"; });
+  title_.addEventListener("input", () => { title_.style.height = "auto"; title_.style.height = title_.scrollHeight + "px"; });
+  return [back];
+}
+
+async function saveTask() {
+  const [p, t] = taskOf(tdlg) || [];
+  if (!t || saving) return;
+  const keys = changed();
+  if (!keys.length) { closeTask(); return; }
+  const op = { task: "edit", project: p.name, id: t.id, ...(p.general ? {} : { direction: t.home || "" }) };
+  for (const k of keys) op[k] = tdlg.form[k].trim();
+  if (!op.title && "title" in op) { error = "У задачи нет названия"; draw(rootRef, hub.snapshot()); return; }
+  if (JSON.stringify(op).length > 2000) { error = "Задача длиннее 2000 знаков: сократите описание"; draw(rootRef, hub.snapshot()); return; }
+  saving = true; error = ""; draw(rootRef, hub.snapshot());
+  await post(hub.snapshot(), op);
+  saving = false;
+  if (error) { draw(rootRef, hub.snapshot()); return; }
+  for (const k of keys) t[k] = op[k] || (k === "assignee" || k === "due" ? null : "");
+  t.updated = new Date().toISOString().slice(0, 16).replace("T", " ");
+  tdlg = null;
+  draw(rootRef, hub.snapshot());
+  toast("Задача сохранена");
+}
+
+function deleteDialog() {
+  const [p, t] = taskOf(tdel) || [];
+  if (!t) { tdel = null; return []; }
+  const back = el("div", "tback"), box = el("div", "tdlg small");
+  box.setAttribute("role", "alertdialog"); box.setAttribute("aria-modal", "true");
+  const no = () => { tdel = null; draw(rootRef, hub.snapshot()); };
+  back.addEventListener("click", (e) => { if (e.target === back) no(); });
+  box.append(el("h3", null, `Удалить ${t.id}?`), el("p", null, `«${t.title}» уйдёт с доски. Файл задачи останется в архиве бэклога (archive/tasks): вернуть можно оттуда.`));
+  const foot = el("div", "acts"), yes = el("button", "btn-s pr", "Удалить"), cancel = el("button", "btn-s", "Отмена");
+  yes.type = cancel.type = "button";
+  yes.addEventListener("click", async () => {
+    tdel = null; tdlg = null;
+    p.tasks = p.tasks.filter((x) => x !== t);
+    draw(rootRef, hub.snapshot());
+    await post(hub.snapshot(), { task: "delete", project: p.name, id: t.id, ...(p.general ? {} : { direction: t.home || "" }) });
+    toast(error ? error : `${t.id} удалена`);
+  });
+  cancel.addEventListener("click", no);
+  box.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); no(); } });
+  foot.append(yes, cancel);
+  box.append(foot);
+  back.append(box);
+  setTimeout(() => cancel.focus());
+  return [back];
+}
+
+// --- копирование ------------------------------------------------------------------------------------------------------
+async function copy(text, done) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {   // страница не на localhost (http по адресу сети): у clipboard API нет доступа
+    const ta = el("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove();
+  }
+  toast(done);
+}
+function toast(text) {
+  document.querySelector(".pst-toast")?.remove();
+  const n = el("div", "pst-toast", text); n.setAttribute("role", "status");
+  document.body.append(n);
+  setTimeout(() => n.remove(), 1800);
 }
 
 function taskForm(snap, pick) {
@@ -961,6 +1122,8 @@ async function submit(p, m) {
 }
 
 // --- вид -------------------------------------------------------------------------------------------------------------
+// окна задачи - на body: у области вида свой слой (fixed в ней не накрывает список сессий)
+const layer = () => document.querySelector(".pst-layer") || document.body.appendChild(el("div", "pst pst-layer"));
 function draw(root, snap) {
   if (!root) return;
   if (!data) { root.replaceChildren(el("div", "pst", error || "Загружаю…")); return; }
@@ -968,7 +1131,13 @@ function draw(root, snap) {
   if (p) groups(snap);   // ждёт ли он вас - для карточки
   const page = el("div", "pst");
   page.append(p ? cardView(snap, p) : listView(snap));
+  if (tmenu) {
+    const off = () => { tmenu = null; draw(rootRef, hub.snapshot()); };
+    page.addEventListener("click", off);
+    page.addEventListener("keydown", (e) => { if (e.key === "Escape") off(); });
+  }
   root.replaceChildren(page);
+  layer().replaceChildren(...(tdlg ? taskDialog(snap) : []), ...(tdel ? deleteDialog() : []));
 }
 
 export default function register(h) {
@@ -978,6 +1147,6 @@ export default function register(h) {
     id: PLUGIN, title: "Статус проектов", subtitle: "этап, бэклог и память проектов", icon: "board",
     render(root, snap) { rootRef = root; if (!busy()) draw(root, snap); },
     show(root) { rootRef = root; load(); timer = setInterval(() => { if (!busy()) load(); }, 15000); },
-    hide() { clearInterval(timer); timer = null; },
+    hide() { clearInterval(timer); timer = null; tdlg = tdel = tmenu = null; document.querySelector(".pst-layer")?.remove(); },
   });
 }
