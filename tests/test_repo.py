@@ -7,6 +7,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import data  # noqa: E402
+import main  # noqa: E402
 import repo  # noqa: E402
 
 ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
@@ -179,6 +180,20 @@ class Collect(unittest.TestCase):
                            repos=lambda r: {"root": r, "branch": "main"})
         self.assertEqual([r["root"] for r in got["projects"][0]["repos"]], [os.path.realpath(app), os.path.realpath(android)])
         self.assertEqual(data.collect(os.path.join(root, "state"), {"app": {"path": app}}, mems)["projects"][0]["repos"], [])
+
+
+class Reveal(unittest.TestCase):
+    def test_only_project_folders_and_repo_roots_can_be_opened(self):
+        root = os.path.realpath(tempfile.mkdtemp())
+        got = [{"path": root, "exists": True, "roots": [os.path.join(root, "ios")]},
+               {"path": os.path.join(root, "gone"), "exists": False, "roots": []}]
+        self.assertEqual(main.folders(got), {root, os.path.join(root, "ios")})
+
+    def test_the_folder_opens_in_the_file_manager_of_the_system(self):
+        for platform, cmd in (("darwin", "open"), ("win32", "explorer"), ("linux", "xdg-open")):
+            calls = []
+            main.reveal("/p", run=lambda c, **kw: calls.append(c), platform=platform)
+            self.assertEqual(calls, [[cmd, "/p"]])
 
 
 if __name__ == "__main__":

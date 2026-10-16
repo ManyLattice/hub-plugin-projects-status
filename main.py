@@ -3,6 +3,7 @@
 import http.server
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -136,6 +137,21 @@ def watch_repos(st):
         time.sleep(15)
 
 
+def folders(got):
+    """Папки, которые страница может открыть в Finder: папка проекта и корни его репо - и ничего больше."""
+    out = set()
+    for p in got:
+        if p.get("exists") and p.get("path"):
+            out.add(os.path.realpath(os.path.expanduser(p["path"])))
+        out.update(os.path.realpath(r) for r in p.get("roots") or [])
+    return out
+
+
+def reveal(path, run=subprocess.Popen, platform=sys.platform):
+    cmd = ["open", path] if platform == "darwin" else ["explorer", path] if platform == "win32" else ["xdg-open", path]
+    run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
 def handler(st):
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -155,6 +171,27 @@ def handler(st):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+        def do_POST(self):
+            origin = self.headers.get("Origin") or ""
+            ok = origin in (f"http://127.0.0.1:{WEB_PORT}", f"http://localhost:{WEB_PORT}") and self.path == "/open"
+            try:
+                path = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)) or "{}").get("path")
+            except ValueError:
+                path = None
+            if ok and isinstance(path, str):
+                with lock:
+                    mems = json.loads(json.dumps(st["projects"]))
+                path = os.path.realpath(os.path.expanduser(path))
+                ok = path in folders(data.collect(STATE, projects(), mems)["projects"]) and os.path.isdir(path)
+            else:
+                ok = False
+            if ok:
+                reveal(path)
+            self.send_response(200 if ok else 403)
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+            self.end_headers()
 
         def log_message(self, *a):
             pass
