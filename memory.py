@@ -7,7 +7,9 @@ import json
 import re
 
 STAGES = ["Кандидат", "Разработка", "К релизу", "В сторе", "Пауза", "Готово"]
-KEYS = {"project", "stage", "note", "goal", "next", "add", "done", "undone", "questions", "link", "unlink"}
+# тип проекта: на доске по этапам - только приложения; без отметки - приложение (кандидаты от ресёрча попадают сами)
+KINDS = ["app", "site", "legal", "invite", "sandbox", "research", "other"]
+KEYS = {"project", "stage", "note", "goal", "next", "add", "done", "undone", "questions", "link", "unlink", "kind", "store"}
 LIMIT = 2000   # пост в канал плагина - до 2000 знаков (core/reducer.py _ext_post)
 
 
@@ -30,10 +32,12 @@ def parse(text, projects):
         raise Invalid(f"нет проекта {upd.get('project')!r} (hub projects)")
     if "stage" in upd and upd["stage"] not in STAGES:
         raise Invalid(f"этап - один из: {', '.join(STAGES)}")
+    if "kind" in upd and upd["kind"] not in KINDS:
+        raise Invalid(f"тип - один из: {', '.join(KINDS)}")
     for k in ("link", "unlink"):
         if k in upd and not (isinstance(upd[k], str) and re.fullmatch(r"[\w.-]+", upd[k])):
             raise Invalid(f"{k} - имя направления")
-    for k in ("note", "goal", "questions"):
+    for k in ("note", "goal", "questions", "store"):
         if k in upd and not isinstance(upd[k], str):
             raise Invalid(f"{k} - строка")
     for k in ("add", "done", "undone"):
@@ -48,12 +52,13 @@ def parse(text, projects):
         if not all(x["text"] for x in upd["next"]):
             raise Invalid("пустой пункт в next")
     if len(upd) == 1:
-        raise Invalid("нечего менять: stage, note, goal, next, add, done, undone, questions, link, unlink")
+        raise Invalid("нечего менять: stage, note, goal, next, add, done, undone, questions, link, unlink, kind, store")
     return upd
 
 
 def empty():
-    return {"stage": None, "note": "", "goal": "", "next": [], "questions": "", "links": [], "updated": None, "by": None, "history": []}
+    return {"stage": None, "kind": None, "note": "", "goal": "", "next": [], "questions": "", "links": [], "store": "",
+            "store_at": None, "updated": None, "by": None, "history": []}
 
 
 def _find(items, text):
@@ -68,6 +73,12 @@ def apply(mem, upd, by, ts):
     if "stage" in upd and upd["stage"] != mem["stage"]:
         what.append(f"этап {mem['stage'] or '-'} → {upd['stage']}")
         mem["stage"] = upd["stage"]
+    if "kind" in upd and upd["kind"] != mem.get("kind"):
+        mem["kind"] = upd["kind"]
+        what.append(f"тип: {upd['kind']}")
+    if "store" in upd and upd["store"].strip() != (mem.get("store") or ""):
+        mem["store"], mem["store_at"] = upd["store"].strip(), ts
+        what.append(f"магазин: {mem['store'][:80]}" if mem["store"] else "магазин снято")
     for k, name in (("note", "пояснение этапа"), ("goal", "цель"), ("questions", "открытые вопросы")):
         if k in upd and upd[k].strip() != mem[k]:
             mem[k] = upd[k].strip()
@@ -110,6 +121,10 @@ def render_md(name, about, mem):
     if about:
         out += [about, ""]
     out.append(f"Этап: {mem['stage'] or '-'}" + (f" - {mem['note']}" if mem["note"] else ""))
+    if mem.get("kind"):
+        out.append(f"Тип: {mem['kind']}")
+    if mem.get("store"):
+        out.append(f"Магазин ({at(mem['store_at'])}): {mem['store']}" if mem.get("store_at") else f"Магазин: {mem['store']}")
     out += ["", "## Цель", mem["goal"] or "(не заполнена)", "", "## Что дальше"]
     out += [f"- [{'x' if x['done'] else ' '}] {x['text']}" for x in mem["next"]] or ["(пусто)"]
     if mem["questions"]:

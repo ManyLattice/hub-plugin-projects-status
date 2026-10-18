@@ -3,7 +3,8 @@
   pmem.py show [<проект>]          память проекта (без имени - проект текущей папки; не нашёлся - все этапы)
   pmem.py set <проект> [--stage Разработка] [--note "<пояснение этапа>"] [--goal "<цель>"]
                        [--add "<пункт>"]… [--done "<пункт или его начало>"]… [--undone "<пункт>"]…
-                       [--questions "<открытые вопросы>"]
+                       [--questions "<открытые вопросы>"] [--kind app|site|legal|invite|sandbox|research|other]
+                       [--store "<загрузки и выручка из магазина, коротко>"]
   pmem.py set <проект> --link <направление> | --unlink <направление>   привязать к проекту направление с другим репо
   pmem.py task list <проект> [--direction <направление>|""]   задачи проекта по бэклогам: свой и каждого живого
                                    направления; проект «-» - задачи без проекта (общий бэклог владельца)
@@ -12,7 +13,8 @@
   pmem.py task status <проект> <TASK-N> "To Do"|"In Progress"|Done [--direction <направление>|""]
 У проекта с несколькими направлениями номер задачи - внутри бэклога: укажи --direction ("" - свой бэклог проекта);
 без него - бэклог по умолчанию (единственного живого направления, иначе свой).
-Этапы: Кандидат, Разработка, К релизу, В сторе, Пауза, Готово. Правка уходит постом в канал плагина от имени сессии
+Этапы: Кандидат, Разработка, К релизу, В сторе, Пауза, Готово. Тип: на доске по этапам - только приложения (app, без
+отметки - тоже app). Правка уходит постом в канал плагина от имени сессии
 (`hub post projects-status`), в истории карточки - с автором."""
 import argparse
 import json
@@ -129,7 +131,7 @@ def task(a):
 
 def set_(a):
     upd = {"project": a.project}
-    for k in ("stage", "note", "goal", "questions", "link", "unlink"):
+    for k in ("stage", "note", "goal", "questions", "link", "unlink", "kind", "store"):
         if getattr(a, k) is not None:
             upd[k] = getattr(a, k)
     for k in ("add", "done", "undone"):
@@ -155,6 +157,8 @@ def main():
     s.add_argument("--note")
     s.add_argument("--goal")
     s.add_argument("--questions")
+    s.add_argument("--kind", choices=memory.KINDS)
+    s.add_argument("--store")
     s.add_argument("--add", action="append")
     s.add_argument("--done", action="append")
     s.add_argument("--undone", action="append")

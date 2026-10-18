@@ -38,6 +38,18 @@ class Memory(unittest.TestCase):
                 memory.parse(text, PROJECTS)
             self.assertIn(why, str(e.exception))
 
+    def test_kind_and_store_figures_are_kept_with_the_history(self):
+        m = memory.empty()
+        self.assertIsNone(m["kind"])                                                     # без отметки - приложение
+        memory.apply(m, upd(project="where", kind="legal"), "hub-dev", 1)
+        memory.apply(m, upd(project="where", store="1,2 тыс. загрузок за 30 дн · $40"), "aso", 2)
+        self.assertEqual((m["kind"], m["store"], m["store_at"]), ("legal", "1,2 тыс. загрузок за 30 дн · $40", 2))
+        self.assertEqual([h["what"] for h in m["history"]], ["тип: legal", "магазин: 1,2 тыс. загрузок за 30 дн · $40"])
+        with self.assertRaises(memory.Invalid) as e:
+            upd(project="where", kind="game")
+        self.assertIn("тип - один из", str(e.exception))
+        self.assertIn("Тип: legal", memory.render_md("where", "", m))
+
     def test_the_file_for_sessions_has_the_stage_goal_and_next(self):
         m = memory.empty()
         memory.apply(m, upd(project="abrief", stage="Разработка", goal="Выпуск в App Store", add=["Иконка"]), "owner", 1)
