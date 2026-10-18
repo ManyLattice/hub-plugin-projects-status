@@ -5,8 +5,16 @@ let hub = null;
 const el = (...a) => hub.el(...a);
 const PLUGIN = "projects-status";
 const STAGES = ["Кандидат", "Разработка", "К релизу", "В сторе", "Пауза", "Готово"];
+const TYPES_ = [["app", "приложение"], ["site", "сайт"], ["legal", "legal"], ["invite", "приглашение"], ["sandbox", "песочница"],
+  ["research", "ресёрч"], ["other", "другое"]];
 const KIND = { "Разработка": "work", "К релизу": "rel", "В сторе": "rel", "Пауза": "rest", "Готово": "ok" };
 const FILTERS = [["all", "Все"], ["dir", "С направлением"], ["wait", "Ждут вас"], ["push", "Не запушено"], ["nodir", "Без направления"]];
+const VIEWS = [["board", "Доска"], ["list", "Список"]], VIEW = `${PLUGIN}.view`;
+let view = "board";
+try { if (localStorage.getItem(VIEW) === "list") view = "list"; } catch { /* приватный режим: доска */ }
+// доска по этапам - только приложения (тип в памяти проекта; без отметки - приложение); в «Разработке» - лимит
+const COLUMNS = ["Кандидат", "Разработка", "К релизу", "В сторе"], FOLDED = ["Пауза", "Готово", "Без этапа"], WIP = { "Разработка": 1 };
+const folds = new Set();   // раскрытые «Пауза», «Готово», «Без этапа»: доска перерисовывается каждые 15 с
 
 let data = null, error = "", timer = null, filter = "all", open = null, editing = null, saving = false;
 let tab = "mem", draft = null;   // вкладка карточки, форма новой задачи
@@ -300,7 +308,15 @@ function listView(snap) {
   const add = el("button", "btn-s pr", "Новая задача"); add.type = "button";
   add.addEventListener("click", () => { draft = newDraft(snap, null); draw(rootRef, snap); rootRef.querySelector(".nf input")?.focus(); });
   top.append(h, el("span", "ps-sp"));
+  const views = el("div", "pviews");
+  for (const [k, t] of VIEWS) {
+    const c = el("button", "pchip", t); c.type = "button"; c.setAttribute("aria-pressed", String(view === k));
+    c.addEventListener("click", () => { view = k; try { localStorage.setItem(VIEW, k); } catch { /* приватный режим */ } draw(rootRef, snap); });
+    views.append(c);
+  }
+  top.append(views);
   if (!draft) top.append(add);
+  const onBoard = view === "board";
   const chips = el("div", "chips");
   const ups = data.projects.filter((p) => unpushedRepos(p).length);
   const counts = { all: data.projects.length, dir: g.go.length + g.done.filter((p) => p.board).length, wait: g.wait.length + g.mine.length,
@@ -311,11 +327,11 @@ function listView(snap) {
     c.addEventListener("click", () => { filter = k; draw(rootRef, snap); });
     chips.append(c);
   }
-  head.append(top, ask(snap, null), chips);
+  head.append(top, ask(snap, null), ...(onBoard ? [] : [chips]));
   box.append(head);
   if (error) box.append(el("p", "err", error));
   if (draft) box.append(taskForm(snap, true));
-  const show = (k) => filter === "all" || filter === k;
+  const show = (k) => (onBoard ? k === "wait" : filter === "all" || filter === k);
 
   if (!seen) markRead();   // первый заход: всё, что есть, - не «новое»
   const moved = changes(), marked = data.projects.filter(fresh).length;
@@ -357,7 +373,7 @@ function listView(snap) {
     box.append(sec("Ждёт вас", g.wait.length + g.mine.length), w);
   }
   const gen = data.general || [], genOpen = gen.filter((t) => t.status !== "Done").length;
-  if (gen.length && filter === "all") {
+  if (gen.length && filter === "all" && !onBoard) {
     const list = el("div", "wb"), row = el("div", "fin");
     row.append(el("span", "nm", "Без проекта"), el("span", null, `${genOpen} открыто · ${gen.length - genOpen} готово`),
       el("span", "ps-sp"), el("span", "mut", "доска →"));
@@ -415,11 +431,82 @@ function listView(snap) {
     }
     box.append(sec("Без направления", g.rest.length, el("span", "ps-sp"), el("span", "newdir", "направление заводит хаб по вашему слову")), rest);
   }
+  if (onBoard) box.append(boardView(snap));
   if ((data.refused || []).length) {
     const r = data.refused[data.refused.length - 1];
     box.append(el("p", "refused", `Последняя правка памяти не принята: ${who(r.by)}, ${at(r.ts)} - ${r.why}`));
   }
   return box;
+}
+
+// --- доска по этапам: только приложения, «Пауза», «Готово» и «Без этапа» свёрнуты ------------------------------------
+const isApp = (p) => !p.general && (!(p.memory || {}).kind || p.memory.kind === "app");
+const stageOf = (p) => (p.memory || {}).stage || (p.board && p.board.archived ? "Готово" : "Без этапа");
+function boardView(snap) {
+  const apps = data.projects.filter(isApp), by = new Map();
+  for (const p of apps) { const k = stageOf(p); if (!by.has(k)) by.set(k, []); by.get(k).push(p); }
+  const changed = (p) => Math.max((p.board || {}).changed || 0, (p.memory || {}).updated || 0);
+  for (const v of by.values()) v.sort((a, b) => (!!b.wait - !!a.wait) || changed(b) - changed(a));
+  const box = el("div", "pboard"), cols = el("div", "pcols");
+  for (const k of COLUMNS) {
+    const list = by.get(k) || [], col = el("section", "pcol"), h = el("h3", "pcol-h");
+    if (KIND[k]) h.dataset.k = KIND[k];
+    h.append(el("span", "t", k), el("span", "n", String(list.length)));
+    if (WIP[k]) {
+      const lim = el("span", "plim" + (list.length > WIP[k] ? " over" : ""), `лимит ${WIP[k]}`);
+      lim.title = list.length > WIP[k] ? `в разработке ${list.length} - доводите по очереди, остальные на паузу` : "одно приложение в разработке за раз";
+      h.append(el("span", "ps-sp"), lim);
+    }
+    col.append(h);
+    for (const p of list) col.append(mini(snap, p, k));
+    if (!list.length) col.append(el("div", "pcol-e", k === "Кандидат" ? "кандидаты от ресёрча появятся здесь" : "пусто"));
+    cols.append(col);
+  }
+  box.append(cols);
+  const fold = el("div", "pfold");
+  for (const k of FOLDED) {
+    const list = by.get(k) || [];
+    if (!list.length) continue;
+    const d = el("details", "pfold-g"), s = el("summary");
+    d.open = folds.has(k);
+    d.addEventListener("toggle", () => { if (d.open) folds.add(k); else folds.delete(k); });
+    s.append(el("span", "k", k), el("span", "n", String(list.length)));
+    const v = el("div", "v");
+    for (const p of list) {
+      const t = el("button", "tag go" + (fresh(p) ? " fresh" : ""), title(p)); t.type = "button";
+      t.title = (p.memory || {}).note || p.about || p.name;
+      t.addEventListener("click", () => openCard(p));
+      v.append(t);
+    }
+    d.append(s, v);
+    fold.append(d);
+  }
+  box.append(fold);
+  const others = data.projects.length - apps.length;
+  if (others) box.append(el("p", "hint", `Не приложения (сайты, legal, приглашения, песочница, ресёрч) не на доске: ${others} - они в «Списке»`));
+  return box;
+}
+function mini(snap, p, k) {
+  const m = p.memory || {}, c = el("div", "pmini" + (p.wait ? " wait" : "")), f = fresh(p);
+  const nm = el("div", "nm", title(p));
+  if (f) nm.append(el("span", "new", f));
+  c.append(nm);
+  if (m.note) c.append(rich("div", "stg", m.note));
+  if (k === "В сторе") {
+    const st = el("div", "pstore" + (m.store ? "" : " mut"), m.store || "цифр магазина пока нет");
+    if (m.store_at) st.title = `обновлено ${at(m.store_at)}`;
+    c.append(st);
+  }
+  const now = working(snap, p);
+  if (now.length) c.append(rich("div", "now", `${now[0].name}: ${doing(now[0])}`));
+  const ft = el("div", "ft");
+  if (p.wait) ft.append(el("span", "wtag", "ждёт вас"));
+  const cold = stale(snap, p);
+  if (cold) ft.append(el("span", "wtag", `застыл ${cold} дн`));
+  ft.append(el("span", "ps-sp"), el("span", "num", ago(Math.max((p.board || {}).changed || 0, m.updated || 0))));
+  c.append(ft);
+  c.addEventListener("click", () => openCard(p));
+  return c;
 }
 
 function card(p) {
@@ -520,7 +607,7 @@ function memoryBox(snap, p, m, ls) {
   } else {
     const e = el("button", "btn-s", "Править"); e.type = "button";
     e.addEventListener("click", () => {
-      editing = { stage: m.stage || null, note: m.note || "", goal: m.goal || "", questions: m.questions || "",
+      editing = { stage: m.stage || null, kind: m.kind || "app", note: m.note || "", goal: m.goal || "", questions: m.questions || "",
         next: (m.next || []).map((x) => x.text).join("\n") };
       draw(rootRef, snap);
       rootRef.querySelector(".mem textarea, .mem input")?.focus();
@@ -546,12 +633,21 @@ function memoryBox(snap, p, m, ls) {
       x.addEventListener("keydown", (e) => { if (e.key === "Escape") { editing = null; draw(rootRef, snap); } });
       return x;
     };
-    box.append(fld("Этап", seg, inp("note")), fld("Цель", inp("goal", 3)),
+    const kinds = el("div", "stseg");
+    for (const [k, t] of TYPES_) {
+      const b = el("button", editing.kind === k ? "on" : null, t); b.type = "button";
+      b.addEventListener("click", () => { editing.kind = k; draw(rootRef, snap); });
+      kinds.append(b);
+    }
+    box.append(fld("Этап", seg, inp("note")), fld("Тип", kinds, el("div", "hint", "на доске по этапам - только приложения")), fld("Цель", inp("goal", 3)),
       fld("Что дальше", inp("next", 5), el("div", "hint", "по пункту в строке; отметки «сделано» сохраняются у тех же пунктов")),
       fld("Открытые вопросы", inp("questions", 2)));
   } else {
     const fill = (v) => { const d = el("div", "v"); d.append(v ? linked(v) : el("span", "fill", "Заполнить")); return d; };
-    box.append(fld("Этап", seg, fill(m.note)), fld("Цель", fill(m.goal)));
+    box.append(fld("Этап", seg, fill(m.note)));
+    if (m.kind && m.kind !== "app") box.append(fld("Тип", el("div", "v", (TYPES_.find(([k]) => k === m.kind) || [, m.kind])[1] + " - не на доске по этапам")));
+    if (m.store) box.append(fld("Магазин", el("div", "v", m.store + (m.store_at ? ` (${at(m.store_at)})` : ""))));
+    box.append(fld("Цель", fill(m.goal)));
     const ul = el("ul", "next");
     for (const x of m.next || []) {
       const li = rich("li", "tick" + (x.done ? " done" : ""), x.text);
@@ -1107,6 +1203,7 @@ async function post(snap, upd) {
 async function submit(p, m) {
   const e = editing, upd = { project: p.name };
   if (e.stage && e.stage !== m.stage) upd.stage = e.stage;
+  if (e.kind !== (m.kind || "app")) upd.kind = e.kind;
   for (const k of ["note", "goal", "questions"]) if (e[k].trim() !== (m[k] || "")) upd[k] = e[k].trim();
   const lines = e.next.split("\n").map((x) => x.trim()).filter(Boolean);
   const old = m.next || [];
