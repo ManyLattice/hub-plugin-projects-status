@@ -90,6 +90,24 @@ function linked(text) {
 }
 const rich = (tag, cls, text) => { const x = el(tag, cls); x.append(linked(text)); return x; };
 
+// --- ссылка на Figma: только https и figma.com / www.figma.com, как memory.figma_ok -------------------------------------
+function figmaHref(url) {
+  try {
+    const u = new URL(String(url || ""));
+    const ok = u.protocol === "https:" && ["figma.com", "www.figma.com"].includes(u.host) && !u.username && !u.password &&
+      u.pathname.replace(/\//g, "") !== "";
+    return ok ? u.href : "";
+  } catch { return ""; }
+}
+function figmaLink(m, cls, text) {
+  const href = figmaHref((m || {}).figma);
+  if (!href) return null;
+  const a = el("a", `figma ${cls}`, text); a.href = href; a.target = "_blank"; a.rel = "noopener";
+  a.title = `Открыть в Figma: ${href}`; a.setAttribute("aria-label", "Открыть в Figma");
+  a.addEventListener("click", (e) => e.stopPropagation());
+  return a;
+}
+
 // --- сессии проекта ------------------------------------------------------------------------------------------------
 const under = (cwd, path) => !!(cwd && path) && (cwd === path || cwd.startsWith(path.replace(/\/$/, "") + "/"));
 const lives = (p) => (p.directions || []).filter((d) => !d.board.archived);
@@ -503,7 +521,10 @@ function mini(snap, p, k) {
   if (p.wait) ft.append(el("span", "wtag", "ждёт вас"));
   const cold = stale(snap, p);
   if (cold) ft.append(el("span", "wtag", `застыл ${cold} дн`));
-  ft.append(el("span", "ps-sp"), el("span", "num", ago(Math.max((p.board || {}).changed || 0, m.updated || 0))));
+  ft.append(el("span", "ps-sp"));
+  const fg = figmaLink(m, "dot");
+  if (fg) ft.append(fg);
+  ft.append(el("span", "num", ago(Math.max((p.board || {}).changed || 0, m.updated || 0))));
   c.append(ft);
   c.addEventListener("click", () => openCard(p));
   return c;
@@ -536,6 +557,8 @@ function card(p) {
   const cold = stale(hub.snapshot() || {}, p), up = unpushedRepos(p).flatMap((r) => r.ahead || []);
   if (cold) ft.append(el("span", "wtag", `застыл ${cold} дн`), " · ");
   if (up.length) ft.append(el("span", null, up.length > 1 ? `не запушено в ${many_(up.length, "ветке", "ветках", "ветках")}` : `не запушено ${up[0].n}`), " · ");
+  const fg = figmaLink(m, "dot");
+  if (fg) ft.append(fg);
   ft.append(el("span", "num", ago(Math.max(p.board.changed || 0, m.updated || 0))));
   c.append(ft);
   c.addEventListener("click", () => openCard(p));
@@ -567,6 +590,8 @@ function cardView(snap, p) {
   meta.append(el("span", "mono", p.exists ? `· ${p.path.replace(/^\/Users\/[^/]+/, "~")}` : "· папки проекта ещё нет"));
   h.append(meta);
   head.append(h, el("span", "ps-sp"));
+  const fg = figmaLink(m, "btn-s", "Figma");
+  if (fg) head.append(fg);
   for (const s of ls.slice(0, 3)) {
     const o = el("button", "btn-s", `Открыть ${s.name}`); o.type = "button";
     o.addEventListener("click", () => goSession(s.name));
@@ -601,14 +626,14 @@ function memoryBox(snap, p, m, ls) {
   if (editing) {
     const cancel = el("button", "btn-s", "Отмена"), save = el("button", "btn-s pr", saving ? "Сохраняю…" : "Сохранить");
     cancel.type = save.type = "button"; save.disabled = saving;
-    cancel.addEventListener("click", () => { editing = null; draw(rootRef, snap); });
+    cancel.addEventListener("click", () => { editing = null; error = ""; draw(rootRef, snap); });
     save.addEventListener("click", () => submit(p, m));
     h.append(cancel, save);
   } else {
     const e = el("button", "btn-s", "Править"); e.type = "button";
     e.addEventListener("click", () => {
       editing = { stage: m.stage || null, kind: m.kind || "app", note: m.note || "", goal: m.goal || "", questions: m.questions || "",
-        next: (m.next || []).map((x) => x.text).join("\n") };
+        figma: m.figma || "", next: (m.next || []).map((x) => x.text).join("\n") };
       draw(rootRef, snap);
       rootRef.querySelector(".mem textarea, .mem input")?.focus();
     });
@@ -639,7 +664,9 @@ function memoryBox(snap, p, m, ls) {
       b.addEventListener("click", () => { editing.kind = k; draw(rootRef, snap); });
       kinds.append(b);
     }
-    box.append(fld("Этап", seg, inp("note")), fld("Тип", kinds, el("div", "hint", "на доске по этапам - только приложения")), fld("Цель", inp("goal", 3)),
+    const fig = inp("figma"); fig.type = "url"; fig.placeholder = "https://www.figma.com/design/…";
+    box.append(fld("Этап", seg, inp("note")), fld("Тип", kinds, el("div", "hint", "на доске по этапам - только приложения")),
+      fld("Figma", fig, el("div", error ? "hint err" : "hint", error || "ссылка на файл проекта в Figma; пусто - убрать")), fld("Цель", inp("goal", 3)),
       fld("Что дальше", inp("next", 5), el("div", "hint", "по пункту в строке; отметки «сделано» сохраняются у тех же пунктов")),
       fld("Открытые вопросы", inp("questions", 2)));
   } else {
@@ -1204,7 +1231,8 @@ async function submit(p, m) {
   const e = editing, upd = { project: p.name };
   if (e.stage && e.stage !== m.stage) upd.stage = e.stage;
   if (e.kind !== (m.kind || "app")) upd.kind = e.kind;
-  for (const k of ["note", "goal", "questions"]) if (e[k].trim() !== (m[k] || "")) upd[k] = e[k].trim();
+  for (const k of ["note", "goal", "questions", "figma"]) if (e[k].trim() !== (m[k] || "")) upd[k] = e[k].trim();
+  if (upd.figma && !figmaHref(upd.figma)) { error = "Нужна ссылка https://www.figma.com/… или https://figma.com/…"; draw(rootRef, hub.snapshot()); return; }
   const lines = e.next.split("\n").map((x) => x.trim()).filter(Boolean);
   const old = m.next || [];
   if (lines.join("\n") !== old.map((x) => x.text).join("\n")) {
@@ -1213,7 +1241,7 @@ async function submit(p, m) {
   if (Object.keys(upd).length === 1) { editing = null; draw(rootRef, hub.snapshot()); return; }
   const text = JSON.stringify(upd);
   if (text.length > 2000) { error = "Правка длиннее 2000 знаков: сократите цель или «Что дальше»"; draw(rootRef, hub.snapshot()); return; }
-  saving = true; draw(rootRef, hub.snapshot());
+  saving = true; error = ""; draw(rootRef, hub.snapshot());
   await post(hub.snapshot(), upd);
   saving = false; editing = null;
 }
