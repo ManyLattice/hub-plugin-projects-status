@@ -1,6 +1,8 @@
 // «Статус проектов»: все проекты из hub projects - что ждёт вас, что идёт (этап и бэклог направления), что готово,
 // что без направления; карточка проекта - его память (этап, цель, что дальше, решения) и живые данные.
 // Данные - процесс плагина на порту «страница + 12»; правки памяти владельца - постом в канал плагина.
+import { figmaAbout, figmaHref, figmaMeta } from "./figma.js";
+
 let hub = null;
 const el = (...a) => hub.el(...a);
 const PLUGIN = "projects-status";
@@ -90,20 +92,14 @@ function linked(text) {
 }
 const rich = (tag, cls, text) => { const x = el(tag, cls); x.append(linked(text)); return x; };
 
-// --- ссылка на Figma: только https и figma.com / www.figma.com, как memory.figma_ok -------------------------------------
-function figmaHref(url) {
-  try {
-    const u = new URL(String(url || ""));
-    const ok = u.protocol === "https:" && ["figma.com", "www.figma.com"].includes(u.host) && !u.username && !u.password &&
-      u.pathname.replace(/\//g, "") !== "";
-    return ok ? u.href : "";
-  } catch { return ""; }
-}
-function figmaLink(m, cls, text) {
-  const href = figmaHref((m || {}).figma);
-  if (!href) return null;
-  const a = el("a", `figma ${cls}`, text); a.href = href; a.target = "_blank"; a.rel = "noopener";
-  a.title = `Открыть в Figma: ${href}`; a.setAttribute("aria-label", "Открыть в Figma");
+// --- ссылка на Figma (figma.js): пилюля на доске и в списке, кнопка в шапке, строка в памяти -----------------------------
+function figmaLink(m, cls, label) {
+  const f = figmaMeta((m || {}).figma);
+  if (!f) return null;
+  const a = el("a", `figma ${cls}`); a.href = f.href; a.target = "_blank"; a.rel = "noopener";
+  a.append(el("span", "fn", label));
+  if (cls !== "chip") a.append(el("span", "arr", "↗"));
+  a.title = `Открыть в Figma: ${figmaAbout(f)}`; a.setAttribute("aria-label", "Открыть в Figma");
   a.addEventListener("click", (e) => e.stopPropagation());
   return a;
 }
@@ -522,7 +518,7 @@ function mini(snap, p, k) {
   const cold = stale(snap, p);
   if (cold) ft.append(el("span", "wtag", `застыл ${cold} дн`));
   ft.append(el("span", "ps-sp"));
-  const fg = figmaLink(m, "dot");
+  const fg = figmaLink(m, "chip", "Figma");
   if (fg) ft.append(fg);
   ft.append(el("span", "num", ago(Math.max((p.board || {}).changed || 0, m.updated || 0))));
   c.append(ft);
@@ -557,7 +553,7 @@ function card(p) {
   const cold = stale(hub.snapshot() || {}, p), up = unpushedRepos(p).flatMap((r) => r.ahead || []);
   if (cold) ft.append(el("span", "wtag", `застыл ${cold} дн`), " · ");
   if (up.length) ft.append(el("span", null, up.length > 1 ? `не запушено в ${many_(up.length, "ветке", "ветках", "ветках")}` : `не запушено ${up[0].n}`), " · ");
-  const fg = figmaLink(m, "dot");
+  const fg = figmaLink(m, "chip", "Figma");
   if (fg) ft.append(fg);
   ft.append(el("span", "num", ago(Math.max(p.board.changed || 0, m.updated || 0))));
   c.append(ft);
@@ -590,7 +586,7 @@ function cardView(snap, p) {
   meta.append(el("span", "mono", p.exists ? `· ${p.path.replace(/^\/Users\/[^/]+/, "~")}` : "· папки проекта ещё нет"));
   h.append(meta);
   head.append(h, el("span", "ps-sp"));
-  const fg = figmaLink(m, "btn-s", "Figma");
+  const fm = figmaMeta(m.figma), fg = figmaLink(m, "btn-s", fm && fm.name ? `Figma · ${fm.name}` : "Figma");
   if (fg) head.append(fg);
   for (const s of ls.slice(0, 3)) {
     const o = el("button", "btn-s", `Открыть ${s.name}`); o.type = "button";
@@ -665,8 +661,11 @@ function memoryBox(snap, p, m, ls) {
       kinds.append(b);
     }
     const fig = inp("figma"); fig.type = "url"; fig.placeholder = "https://www.figma.com/design/…";
+    const figHint = (v) => { const f = figmaMeta(v); return f ? `откроется ${figmaAbout(f)}; пусто - убрать` : "ссылка на файл проекта в Figma; пусто - убрать"; };
+    const fh = el("div", error ? "hint err" : "hint", error || figHint(editing.figma));
+    fig.addEventListener("input", () => { fh.className = "hint"; fh.textContent = figHint(fig.value); });
     box.append(fld("Этап", seg, inp("note")), fld("Тип", kinds, el("div", "hint", "на доске по этапам - только приложения")),
-      fld("Figma", fig, el("div", error ? "hint err" : "hint", error || "ссылка на файл проекта в Figma; пусто - убрать")), fld("Цель", inp("goal", 3)),
+      fld("Figma", fig, fh), fld("Цель", inp("goal", 3)),
       fld("Что дальше", inp("next", 5), el("div", "hint", "по пункту в строке; отметки «сделано» сохраняются у тех же пунктов")),
       fld("Открытые вопросы", inp("questions", 2)));
   } else {
@@ -674,7 +673,10 @@ function memoryBox(snap, p, m, ls) {
     box.append(fld("Этап", seg, fill(m.note)));
     if (m.kind && m.kind !== "app") box.append(fld("Тип", el("div", "v", (TYPES_.find(([k]) => k === m.kind) || [, m.kind])[1] + " - не на доске по этапам")));
     if (m.store) box.append(fld("Магазин", el("div", "v", m.store + (m.store_at ? ` (${at(m.store_at)})` : ""))));
-    box.append(fld("Цель", fill(m.goal)));
+    const fm = figmaMeta(m.figma), fv = el("div", "v figrow");
+    if (fm) fv.append(figmaLink(m, "fname", fm.name || "Figma"), el("span", "kind", `· ${fm.kind}`));
+    else fv.append(el("span", "fill", "Добавить ссылку"));
+    box.append(fld("Figma", fv), fld("Цель", fill(m.goal)));
     const ul = el("ul", "next");
     for (const x of m.next || []) {
       const li = rich("li", "tick" + (x.done ? " done" : ""), x.text);

@@ -3,7 +3,8 @@
 .pst .ps-head { display: grid; gap: 12px; }
 .pst .ps-head h1 { margin: 0; font-size: var(--text-xl); font-weight: 650; letter-spacing: -.01em; }
 .pst .ps-head .sum { color: var(--muted-foreground); font-size: var(--text-sm); margin-top: 4px; font-variant-numeric: tabular-nums; }
-.pst .ps-top { display: flex; align-items: flex-start; gap: 12px; }
+.pst .ps-top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+.pst .ps-top > div:first-child { flex: 1 1 280px; }
 .pst .ps-head .sum b { color: var(--foreground); font-weight: 600; }
 .pst .ps-head .sum .w { color: var(--warning); }
 .pst .ps-sp { flex: 1; }
@@ -58,7 +59,7 @@
 .pst .wi .t { font-size: var(--text-sm); }
 .pst .wi .c { font-size: var(--text-xs); color: var(--muted-foreground); }
 .pst .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.pst .card { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px 16px 16px; display: grid; gap: 12px; align-content: start;
+.pst .card { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px 16px 16px; display: grid; gap: 12px; align-content: start;
   background: color-mix(in oklch, var(--foreground) 2%, var(--background)); }
 .pst .card .top { display: flex; align-items: flex-start; gap: 10px; }
 .pst .card .nm { font-weight: 600; font-size: var(--text-md); }
@@ -67,7 +68,7 @@
 .pst .card ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: var(--text-xs); color: var(--muted-foreground); }
 .pst .card ul li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pst .card ul li::before { content: "▸ "; color: var(--primary); }
-.pst .card .ft { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: var(--text-xs); color: var(--muted-foreground); border-top: 1px solid var(--border); padding-top: 10px; }
+.pst .card .ft { min-width: 0; display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 8px; font-size: var(--text-xs); color: var(--muted-foreground); border-top: 1px solid var(--border); padding-top: 10px; }
 .pst .card.wait { border-color: color-mix(in oklch, var(--warning) 40%, transparent); }
 .pst .card .wtag { font-size: var(--text-xs); color: var(--warning); font-weight: 500; }
 .pst .card.dim { opacity: .72; }
@@ -75,10 +76,12 @@
 .pst .fin .nm { font-weight: 600; }
 .pst .fin.up .nm { flex: none; }
 .pst .card .ft > span { white-space: nowrap; }
+.pst .card .ft > .dirn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .pst .fin.up .br { min-width: 0; overflow-wrap: anywhere; }
 .pst .pc { display: grid; gap: var(--space-5); max-width: 1180px; padding: var(--space-2) var(--space-3) var(--space-8); }
 .pst .pc-back { color: var(--muted-foreground); font-size: var(--text-sm); display: flex; align-items: center; gap: 6px; }
-.pst .pc-head { display: flex; align-items: flex-start; gap: 16px; }
+.pst .pc-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 16px; }
+.pst .pc-head > div:first-child { flex: 1 1 280px; }
 .pst .pc-head > div { min-width: 0; }
 .pst .pc-meta .mono { overflow-wrap: anywhere; min-width: 0; }
 .pst .pc-head h1 { margin: 0; font-size: var(--text-xl); font-weight: 650; }
@@ -305,6 +308,17 @@
 .pst a.figma { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
 .pst a.figma::before { content: ""; flex: none; width: 8px; height: 12px; background: no-repeat center / contain
   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 38 57'%3E%3Cpath fill='%23F24E1E' d='M19 0H9.5a9.5 9.5 0 0 0 0 19H19z'/%3E%3Cpath fill='%23FF7262' d='M19 0h9.5a9.5 9.5 0 0 1 0 19H19z'/%3E%3Cpath fill='%23A259FF' d='M9.5 19a9.5 9.5 0 0 0 0 19H19V19z'/%3E%3Ccircle fill='%231ABCFE' cx='28.5' cy='28.5' r='9.5'/%3E%3Cpath fill='%230ACF83' d='M9.5 38a9.5 9.5 0 1 0 9.5 9.5V38z'/%3E%3C/svg%3E"); }
-.pst a.figma.dot { padding: 2px 4px; margin: -2px 0; border-radius: var(--radius); opacity: .8; }
-.pst a.figma.dot:hover { opacity: 1; background: var(--accent); }
+.pst a.figma .arr { color: var(--muted-foreground); font-size: var(--text-xs); margin-left: -2px; }
+.pst a.figma.chip { flex: none; height: 24px; padding: 0 8px 0 7px; margin: -4px 0; gap: 5px; border: 1px solid var(--border);
+  border-radius: var(--radius-pill); font-size: var(--text-xs); color: var(--muted-foreground); }
+.pst a.figma.chip::before { width: 7px; height: 11px; }
+.pst a.figma.chip:hover { background: var(--accent); color: var(--foreground); border-color: var(--input); }
+.pst .pc-head a.figma { min-width: 0; }
+.pst .pc-head a.figma .fn { max-width: min(40ch, 60vw); }
 .pst .pc-head a.figma.btn-s:hover { border-color: var(--input); }
+.pst a.figma .fn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* contain: без него полное имя файла задаёт ширину карточки проекта и на 390 её распирает */
+.pst .figrow { display: flex; align-items: center; gap: 6px; min-width: 0; contain: inline-size; }
+.pst .figrow a.figma.fname { min-width: 0; color: var(--foreground); font-weight: 500; }
+.pst .figrow a.figma.fname:hover { text-decoration: underline; text-underline-offset: 3px; }
+.pst .figrow .kind { flex: none; color: var(--muted-foreground); }
