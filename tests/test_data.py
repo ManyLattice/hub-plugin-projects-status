@@ -63,6 +63,16 @@ class Data(unittest.TestCase):
         self.assertEqual(st["projects"]["app"]["stage"], "Разработка")
         self.assertEqual([(r["id"], r["why"]) for r in st["refused"]], [("p7", "не JSON")])
 
+    def test_a_figma_link_folds_and_a_foreign_one_is_refused(self):
+        st = {"last": 0, "projects": {"app": {k: v for k, v in memory.empty().items() if k != "figma"}}, "refused": []}
+        posts = [{"id": "p1", "by": "design", "ts": 1, "text": '{"project": "app", "figma": "https://www.figma.com/design/k/App"}'},
+                 {"id": "p2", "by": "app-redesign", "ts": 2, "text": '{"project": "app", "figma": "https://evil.com/design/k"}'}]
+        self.assertEqual(main.fold(st, posts, {"app": {}}), {"app"})
+        self.assertEqual(st["projects"]["app"]["figma"], "https://www.figma.com/design/k/App")
+        self.assertEqual([h["by"] for h in st["projects"]["app"]["history"]], ["design"])
+        self.assertEqual([r["id"] for r in st["refused"]], ["p2"])
+        self.assertIn("figma - ссылка", st["refused"][0]["why"])
+
 
 if __name__ == "__main__":
     unittest.main()

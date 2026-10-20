@@ -5,16 +5,28 @@
 import datetime
 import json
 import re
+import urllib.parse
 
 STAGES = ["Кандидат", "Разработка", "К релизу", "В сторе", "Пауза", "Готово"]
 # тип проекта: на доске по этапам - только приложения; без отметки - приложение (кандидаты от ресёрча попадают сами)
 KINDS = ["app", "site", "legal", "invite", "sandbox", "research", "other"]
-KEYS = {"project", "stage", "note", "goal", "next", "add", "done", "undone", "questions", "link", "unlink", "kind", "store"}
+KEYS = {"project", "stage", "note", "goal", "next", "add", "done", "undone", "questions", "link", "unlink", "kind", "store", "figma"}
 LIMIT = 2000   # пост в канал плагина - до 2000 знаков (core/reducer.py _ext_post)
+FIGMA_HOSTS = {"figma.com", "www.figma.com"}
 
 
 class Invalid(ValueError):
     pass
+
+
+def figma_ok(url):
+    """Ссылка на файл Figma: https, хост figma.com или www.figma.com, есть путь; пустая строка - снять ссылку."""
+    if url == "":
+        return True
+    if len(url) > 500 or re.search(r"\s", url):
+        return False
+    u = urllib.parse.urlsplit(url)
+    return u.scheme == "https" and u.netloc.lower() in FIGMA_HOSTS and len(u.path.strip("/")) > 0
 
 
 def parse(text, projects):
@@ -40,6 +52,10 @@ def parse(text, projects):
     for k in ("note", "goal", "questions", "store"):
         if k in upd and not isinstance(upd[k], str):
             raise Invalid(f"{k} - строка")
+    if "figma" in upd:
+        if not isinstance(upd["figma"], str) or not figma_ok(upd["figma"].strip()):
+            raise Invalid("figma - ссылка https://www.figma.com/… (design, file, board, proto, slides…) или пустая строка - снять")
+        upd["figma"] = upd["figma"].strip()
     for k in ("add", "done", "undone"):
         if k in upd and not (isinstance(upd[k], list) and all(isinstance(x, str) and x.strip() for x in upd[k])):
             raise Invalid(f"{k} - список строк")
@@ -52,13 +68,13 @@ def parse(text, projects):
         if not all(x["text"] for x in upd["next"]):
             raise Invalid("пустой пункт в next")
     if len(upd) == 1:
-        raise Invalid("нечего менять: stage, note, goal, next, add, done, undone, questions, link, unlink, kind, store")
+        raise Invalid("нечего менять: stage, note, goal, next, add, done, undone, questions, link, unlink, kind, store, figma")
     return upd
 
 
 def empty():
     return {"stage": None, "kind": None, "note": "", "goal": "", "next": [], "questions": "", "links": [], "store": "",
-            "store_at": None, "updated": None, "by": None, "history": []}
+            "store_at": None, "figma": "", "updated": None, "by": None, "history": []}
 
 
 def _find(items, text):
@@ -79,6 +95,9 @@ def apply(mem, upd, by, ts):
     if "store" in upd and upd["store"].strip() != (mem.get("store") or ""):
         mem["store"], mem["store_at"] = upd["store"].strip(), ts
         what.append(f"магазин: {mem['store'][:80]}" if mem["store"] else "магазин снято")
+    if "figma" in upd and upd["figma"] != (mem.get("figma") or ""):
+        mem["figma"] = upd["figma"]
+        what.append(f"Figma: {mem['figma']}" if mem["figma"] else "Figma снято")
     for k, name in (("note", "пояснение этапа"), ("goal", "цель"), ("questions", "открытые вопросы")):
         if k in upd and upd[k].strip() != mem[k]:
             mem[k] = upd[k].strip()
@@ -125,6 +144,8 @@ def render_md(name, about, mem):
         out.append(f"Тип: {mem['kind']}")
     if mem.get("store"):
         out.append(f"Магазин ({at(mem['store_at'])}): {mem['store']}" if mem.get("store_at") else f"Магазин: {mem['store']}")
+    if mem.get("figma"):
+        out.append(f"Figma: {mem['figma']}")
     out += ["", "## Цель", mem["goal"] or "(не заполнена)", "", "## Что дальше"]
     out += [f"- [{'x' if x['done'] else ' '}] {x['text']}" for x in mem["next"]] or ["(пусто)"]
     if mem["questions"]:
