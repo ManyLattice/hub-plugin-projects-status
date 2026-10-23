@@ -936,7 +936,9 @@ function tasksView(snap, p) {
   const out = [];
   if (draft) out.push(taskForm(snap, false));
   const box = el("div", "box"), h = el("h3", null, "Доска");
-  h.append(el("span", "ps-sp"), el("span", "src", `${home(p)} · перетащите карточку или откройте её: правка, копирование, удаление`));
+  const src = el("span", "src seps");
+  src.append(el("span", null, home(p)), el("span", "sep", "перетащите карточку или откройте её: правка, копирование, удаление"));
+  h.append(el("span", "ps-sp"), src);
   if (!draft) {
     const add = el("button", "btn-s pr", "Новая задача"); add.type = "button";
     add.addEventListener("click", () => {
