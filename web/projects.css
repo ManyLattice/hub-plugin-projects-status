@@ -88,12 +88,15 @@
 .pst .pc-head .ab { color: var(--muted-foreground); margin-top: 4px; font-size: var(--text-sm); }
 .pst .pc-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; font-size: var(--text-xs); color: var(--muted-foreground); }
 .pst .pc-meta .dirn { color: var(--foreground); }
+.pst .pc-meta .sep:not(.lead)::before { content: "·\00a0"; }
 .pst .pc-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 .pst .box { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px 18px; display: grid; gap: 12px;
   background: color-mix(in oklch, var(--foreground) 2%, var(--background)); }
 .pst .box h3 { margin: 0; font-size: var(--text-sm); font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .pst .box h3 .ps-sp { flex: 1; }
 .pst .box h3 .src { font-weight: 400; font-size: var(--text-xs); color: var(--muted-foreground); }
+.pst .box h3 .src.seps { display: flex; flex-wrap: wrap; }
+.pst .box h3 .src .sep:not(.lead)::before { content: "\00a0·\00a0"; }
 .pst .mem { border-color: color-mix(in oklch, var(--primary) 35%, var(--border)); }
 .pst .stseg { display: flex; flex-wrap: wrap; gap: 6px; }
 .pst .stseg span { padding: 5px 12px; border-radius: var(--radius-pill); border: 1px solid var(--border); font-size: var(--text-xs); color: var(--muted-foreground); white-space: nowrap; }

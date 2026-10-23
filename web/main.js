@@ -281,6 +281,19 @@ function phase(stage) {
   if (KIND[stage]) c.dataset.k = KIND[stage];
   return c;
 }
+// «·» перед .sep - в CSS; в начале перенесённой строки он прячется, а его ширина уходит в отступ справа:
+// иначе узел станет уже и перескочит на прежнюю строку уже без точки
+const seps = new ResizeObserver((es) => es.forEach((e) => leadSeps(e.target)));
+function leadSeps(row) {
+  const items = [...row.children];
+  for (const s of items) { s.classList.remove("lead"); s.style.paddingRight = ""; }
+  const r = items.map((x) => x.getBoundingClientRect());
+  items.forEach((s, i) => {
+    if (!i || !s.classList.contains("sep") || r[i].top < r[i - 1].bottom - 1) return;
+    s.classList.add("lead");
+    s.style.paddingRight = `${r[i].width - s.getBoundingClientRect().width}px`;
+  });
+}
 function bar(b) {
   const n = b.counts, all = n["Done"] + n["In Progress"] + n["To Do"] || 1;
   const box = el("div", "pbar");
@@ -577,13 +590,13 @@ function cardView(snap, p) {
 
   const head = el("div", "pc-head"), h = el("div");
   h.append(el("h1", null, title(p)), el("div", "ab", about(p)));
-  const meta = el("div", "pc-meta");
+  const meta = el("div", "pc-meta seps");
   meta.append(phase(m.stage));
   const cold = stale(snap, p);
   if (cold) meta.append(el("span", "wtag", `застыл: ${many_(cold, "день", "дня", "дней")} без коммитов`));
   const ls = leads(snap, p);
-  if (p.direction) meta.append(el("span", "dirn", dirNames(p)), el("span", null, ls.length ? `· ${ls[0].label || ls[0].state}` : "· сессии нет"));
-  meta.append(el("span", "mono", p.exists ? `· ${p.path.replace(/^\/Users\/[^/]+/, "~")}` : "· папки проекта ещё нет"));
+  if (p.direction) meta.append(el("span", "dirn", dirNames(p)), el("span", "sep", ls.length ? ls[0].label || ls[0].state : "сессии нет"));
+  meta.append(el("span", "mono sep", p.exists ? p.path.replace(/^\/Users\/[^/]+/, "~") : "папки проекта ещё нет"));
   h.append(meta);
   head.append(h, el("span", "ps-sp"));
   const fm = figmaMeta(m.figma), fg = figmaLink(m, "btn-s", fm && fm.name ? `Figma · ${fm.name}` : "Figma");
@@ -618,7 +631,10 @@ function cardView(snap, p) {
 function memoryBox(snap, p, m, ls) {
   const box = el("div", "box mem"), h = el("h3", null, "Память проекта");
   const by = [...new Set(ls.map((s) => s.name))];
-  h.append(el("span", "ps-sp"), el("span", "src", [by.length ? `ведут ${by.join(", ")} и хаб` : "ведёт хаб", m.updated ? `правка ${ago(m.updated)}` : ""].filter(Boolean).join(" · ")));
+  const src = el("span", "src seps");
+  src.append(...[by.length ? `ведут ${by.join(", ")} и хаб` : "ведёт хаб", m.updated ? `правка ${ago(m.updated)}` : ""].filter(Boolean)
+    .map((t, i) => el("span", i ? "sep" : null, t)));
+  h.append(el("span", "ps-sp"), src);
   if (editing) {
     const cancel = el("button", "btn-s", "Отмена"), save = el("button", "btn-s pr", saving ? "Сохраняю…" : "Сохранить");
     cancel.type = save.type = "button"; save.disabled = saving;
@@ -1264,6 +1280,8 @@ function draw(root, snap) {
     page.addEventListener("keydown", (e) => { if (e.key === "Escape") off(); });
   }
   root.replaceChildren(page);
+  seps.disconnect();
+  for (const row of page.querySelectorAll(".seps")) seps.observe(row);
   layer().replaceChildren(...(tdlg ? taskDialog(snap) : []), ...(tdel ? deleteDialog() : []));
 }
 
@@ -1274,6 +1292,6 @@ export default function register(h) {
     id: PLUGIN, title: "Статус проектов", subtitle: "этап, бэклог и память проектов", icon: "board",
     render(root, snap) { rootRef = root; if (!busy()) draw(root, snap); },
     show(root) { rootRef = root; load(); timer = setInterval(() => { if (!busy()) load(); }, 15000); },
-    hide() { clearInterval(timer); timer = null; tdlg = tdel = tmenu = null; document.querySelector(".pst-layer")?.remove(); },
+    hide() { clearInterval(timer); timer = null; seps.disconnect(); tdlg = tdel = tmenu = null; document.querySelector(".pst-layer")?.remove(); },
   });
 }
