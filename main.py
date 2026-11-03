@@ -90,7 +90,7 @@ def jira_post(path, body):
         except (ValueError, keystore.Unavailable) as e:
             return 200, {"ok": False, "error": str(e), "nostore": isinstance(e, keystore.Unavailable)}
         jira.save_settings(STATE, s)
-        BOARD.wake.set()
+        BOARD.reconnect()
         return 200, {"ok": True}
     return 404, {"ok": False}
 

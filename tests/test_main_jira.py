@@ -48,6 +48,10 @@ class Routes(unittest.TestCase):
         self.assertEqual(seen, [TOKEN])
         self.assertNotIn(TOKEN, json.dumps(out))
 
+    def test_after_save_the_view_says_connecting_until_the_first_poll(self):
+        main.jira_post("/jira/save", {**FORM, "token": TOKEN})
+        self.assertEqual(main.jira_view()["jira"]["state"], "connecting")
+
     def test_save_without_any_token_is_refused(self):
         code, out = main.jira_post("/jira/save", dict(FORM, email="new@x.com"))
         self.assertFalse(out["ok"])

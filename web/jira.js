@@ -3,7 +3,7 @@
 import * as J from "./jirapure.js";
 
 let c = null;   // от main.js: hub, el, data(), redraw(), askBox, rich, title, goSession, hubName, leads
-let jd = null, jerr = "", loading = false;
+let jd = null, jerr = "", loading = false, again = null;
 let sprint = null, proj = "all", mine = false, col = null, unfold = false;
 let panel = null, gear = null;
 const opened = new Set(), inputs = new Map();
@@ -24,6 +24,8 @@ export async function load() {
     jerr = `Процесс плагина не отвечает (${e.message})`;
   }
   loading = false;
+  clearTimeout(again);
+  again = ((jd || {}).jira || {}).state === "connecting" ? setTimeout(load, 1500) : null;
   c.redraw();
 }
 async function call(path, body) {
@@ -35,7 +37,7 @@ async function call(path, body) {
   }
 }
 export const busy = () => !!gear || [...inputs.values()].some((b) => b.node.contains(document.activeElement));
-export const hide = () => { panel = gear = null; };
+export const hide = () => { panel = gear = null; clearTimeout(again); again = null; };
 
 // --- время -------------------------------------------------------------------------------------------------------
 const age = (ts) => {
@@ -282,8 +284,8 @@ export function page(snap, top, extra = []) {
   const sumSlot = top.querySelector(".sum");
   head.append(top);
   box.append(head, ...extra);
-  if (!jd) {
-    if (sumSlot) sumSlot.replaceChildren(jerr || "Загружаю доску Jira…");
+  if (!jd || (jd.jira || {}).state === "connecting") {
+    if (sumSlot) sumSlot.replaceChildren(jerr || (jd ? "Подключаю Jira: первый опрос доски…" : "Загружаю доску Jira…"));
     if (jerr) box.append(el("p", "err", jerr));
     box.append(skeleton());
     return box;
@@ -523,7 +525,7 @@ async function save() {
   gear.busy = false;
   if (!r.ok) { gear.msg = r.error || "не вышло"; c.redraw(); return; }
   gear = null; jd = null; c.redraw();
-  setTimeout(load, 1500);
+  load();
 }
 async function forget() {
   gear.busy = true; c.redraw();

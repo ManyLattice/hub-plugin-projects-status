@@ -224,6 +224,17 @@ class Poll(unittest.TestCase):
         b.cycle()
         self.assertEqual(b.snapshot()["why"], "не выбрана доска")
 
+    def test_the_first_poll_replaces_connecting(self):
+        b = board(Fake(routes([raw("ABC-1")])))
+        b.reconnect()
+        self.assertEqual(b.snapshot()["state"], "connecting")
+        b.cycle()
+        self.assertEqual(b.snapshot()["state"], "ok")
+        b = board(Fake(routes()), store=Store(token=None))
+        b.reconnect()
+        b.cycle()
+        self.assertEqual(b.snapshot()["state"], "off")
+
     def test_no_keychain_is_said_plainly(self):
         b = board(Fake(routes()), store=Store(ok=False))
         b.cycle()

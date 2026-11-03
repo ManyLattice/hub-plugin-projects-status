@@ -65,9 +65,10 @@ FigJam, прототип, слайды, Make); открывается в нов�
 1. Откройте https://id.atlassian.com/manage-profile/security/api-tokens → **Create API token with scopes**.
 2. Имя (например, «Agents Hub, только чтение») и срок; приложение - **Jira**.
 3. Права - только на чтение: `read:jira-user`, `read:jira-work`, `read:board-scope:jira-software`,
-   `read:board-scope.admin:jira-software` (колонки доски), `read:sprint:jira-software`, `read:project:jira`.
-   Если в списке их нет - выберите гранулярные `read:issue-details:jira`, `read:jql:jira`, `read:comment:jira` вместе с
-   теми же правами Jira Software.
+   `read:board-scope.admin:jira-software` (колонки доски), `read:sprint:jira-software`, `read:project:jira`,
+   `read:issue-details:jira` (задачи доски: без него Jira отвечает 401, `read:jira-work` через шлюз его не заменяет).
+   Если классических `read:jira-user` и `read:jira-work` в списке нет - выберите гранулярные `read:jql:jira`,
+   `read:comment:jira` вместе с теми же правами Jira Software.
 4. Скопируйте токен, вставьте в шестерёнку вместе с email аккаунта, нажмите «Проверить», выберите доску, «Сохранить».
 
 Токен хранится только в связке ключей macOS (пункт `hub-jira-read`, запись через `security` без токена в аргументах

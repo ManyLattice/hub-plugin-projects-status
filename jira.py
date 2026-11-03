@@ -29,7 +29,7 @@ SCOPES = {
     "myself": "read:jira-user",
     "boards": "read:board-scope:jira-software, read:project:jira",
     "config": "read:board-scope.admin:jira-software, read:project:jira",
-    "issues": "read:board-scope:jira-software, read:jira-work (или read:issue-details:jira, read:jql:jira)",
+    "issues": "read:board-scope:jira-software, read:issue-details:jira",
     "sprints": "read:sprint:jira-software",
     "comments": "read:jira-work (или read:comment:jira)",
 }
@@ -377,6 +377,10 @@ class Board:
     def _set(self, **kw):
         with self.lock:
             self.data = {**self.data, **kw}
+
+    def reconnect(self):
+        self._set(state="connecting", why="", status=None, failed=None)
+        self.wake.set()
 
     def cycle(self):
         s = self.settings()
