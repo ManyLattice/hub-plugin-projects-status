@@ -337,7 +337,8 @@ class Board:
         self.state, self.default_url, self.opener, self.store, self.clock = state, default_url, opener, store, clock
         self.lock = threading.Lock()
         self.wake = threading.Event()
-        self.data = {"state": "off", "at": None}
+        saved = load_settings(state)
+        self.data = {"state": "connecting" if saved.get("email") and saved.get("board") else "off", "at": None}
         self.client, self.cfg, self.sprints, self.me = None, None, None, None
         self.cfg_at = self.sprint_at = 0
         self.issues, self.comments, self.seen = {}, {}, self._load_seen()

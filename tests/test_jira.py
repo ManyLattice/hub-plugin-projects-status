@@ -235,6 +235,12 @@ class Poll(unittest.TestCase):
         b.cycle()
         self.assertEqual(b.snapshot()["state"], "off")
 
+    def test_a_fresh_process_with_saved_settings_starts_connecting(self):
+        self.assertEqual(board(Fake(routes())).snapshot()["state"], "connecting")
+        self.assertEqual(jira.Board(tempfile.mkdtemp()).snapshot()["state"], "off")
+        no_board = board(Fake(routes()), settings={"url": "https://site.atlassian.net", "email": "me@x.com", "board": None})
+        self.assertEqual(no_board.snapshot()["state"], "off")
+
     def test_no_keychain_is_said_plainly(self):
         b = board(Fake(routes()), store=Store(ok=False))
         b.cycle()
