@@ -10,6 +10,9 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import data  # noqa: E402
+import hubtasks  # noqa: E402
+import jira  # noqa: E402
+import keystore  # noqa: E402
 import memory  # noqa: E402
 import repo  # noqa: E402
 import tasks  # noqa: E402
@@ -22,11 +25,74 @@ HOME = os.path.join(STATE, "projects-memory")   # memory.json и <проект>.
 HERE = os.path.dirname(os.path.abspath(__file__))
 lock = threading.Lock()
 REPOS = repo.Repos()
+TASKS = hubtasks.Index(STATE)
+
+
+def hub_config():
+    from core import catalog
+    return catalog.load_config(STATE)
 
 
 def projects():
-    from core import catalog
-    return catalog.load_config(STATE).get("projects") or {}
+    return hub_config().get("projects") or {}
+
+
+def hub_jira():
+    try:
+        return hub_config().get("jira") or {}
+    except Exception:  # noqa: BLE001 - настройки на записи
+        return {}
+
+
+BOARD = jira.Board(STATE, default_url=lambda: hub_jira().get("url") or "")
+
+
+def jira_view():
+    """Вид «Jira»: доска (без токена и без лишних полей) и задачи хаба по ключам её проекта."""
+    board = BOARD.snapshot()
+    keys = BOARD.keys() or [k for k in hub_jira().get("projects") or [] if isinstance(k, str)]
+    return {"jira": board, "keys": keys, "hub": TASKS.by_key(keys), "store": keystore.available(), "at": time.time()}
+
+
+def jira_post(path, body):
+    """POST /jira/check, /jira/save, /jira/forget из шестерёнки -> (код, ответ). Токен в ответ не попадает никогда."""
+    default = hub_jira().get("url") or ""
+    if path == "/jira/forget":
+        s = BOARD.settings()
+        if s.get("email"):
+            try:
+                keystore.delete(keystore.account(s["url"], s["email"]))
+            except keystore.Unavailable as e:
+                return 200, {"ok": False, "error": str(e)}
+        jira.save_settings(STATE, {"url": s.get("url") or "", "email": s.get("email") or ""})
+        BOARD.wake.set()
+        return 200, {"ok": True}
+    try:
+        s = jira.clean(body, default)
+    except ValueError as e:
+        return 200, {"ok": False, "error": str(e)}
+    token = str(body.get("token") or "").strip()
+    try:
+        if not token:
+            token = keystore.get(keystore.account(s["url"], s["email"])) or ""
+    except keystore.Unavailable as e:
+        return 200, {"ok": False, "error": str(e), "nostore": True}
+    if path == "/jira/check":
+        if not token:
+            return 200, {"ok": False, "error": "вставьте токен: в связке ключей для этого email его нет"}
+        return 200, {"ok": True, **jira.check(s, token)}
+    if path == "/jira/save":
+        try:
+            if body.get("token"):
+                keystore.put(keystore.account(s["url"], s["email"]), token)
+            elif not token:
+                return 200, {"ok": False, "error": "вставьте токен"}
+        except (ValueError, keystore.Unavailable) as e:
+            return 200, {"ok": False, "error": str(e), "nostore": isinstance(e, keystore.Unavailable)}
+        jira.save_settings(STATE, s)
+        BOARD.wake.set()
+        return 200, {"ok": True}
+    return 404, {"ok": False}
 
 
 def load():
@@ -160,11 +226,14 @@ def handler(st):
                 self.send_response(403)
                 self.end_headers()
                 return
-            with lock:
-                mems = json.loads(json.dumps(st["projects"]))
-                refused = list(st.get("refused") or [])
-            body = json.dumps({**data.collect(STATE, projects(), mems, REPOS.get), "refused": refused[-5:], "at": time.time(), "plugin": HERE},
-                              ensure_ascii=False).encode()
+            if self.path == "/jira":
+                body = json.dumps(jira_view(), ensure_ascii=False).encode()
+            else:
+                with lock:
+                    mems = json.loads(json.dumps(st["projects"]))
+                    refused = list(st.get("refused") or [])
+                body = json.dumps({**data.collect(STATE, projects(), mems, REPOS.get), "refused": refused[-5:], "at": time.time(),
+                                   "plugin": HERE}, ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", origin)
@@ -174,6 +243,8 @@ def handler(st):
 
         def do_POST(self):
             origin = self.headers.get("Origin") or ""
+            if self.path.startswith("/jira/"):
+                return self.jira(origin)
             ok = origin in (f"http://127.0.0.1:{WEB_PORT}", f"http://localhost:{WEB_PORT}") and self.path == "/open"
             try:
                 path = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)) or "{}").get("path")
@@ -193,6 +264,33 @@ def handler(st):
                 self.send_header("Access-Control-Allow-Origin", origin)
             self.end_headers()
 
+        def jira(self, origin):
+            if origin not in (f"http://127.0.0.1:{WEB_PORT}", f"http://localhost:{WEB_PORT}"):
+                self.send_response(403)
+                self.end_headers()
+                return
+            try:
+                body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 8192)) or "{}")
+                code, out = jira_post(self.path, body if isinstance(body, dict) else {})
+            except ValueError:
+                code, out = 400, {"ok": False, "error": "не JSON"}
+            raw = json.dumps(out, ensure_ascii=False).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_OPTIONS(self):
+            origin = self.headers.get("Origin") or ""
+            self.send_response(204 if origin in (f"http://127.0.0.1:{WEB_PORT}", f"http://localhost:{WEB_PORT}") else 403)
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Methods", "GET, POST")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.end_headers()
+
         def log_message(self, *a):
             pass
     return H
@@ -202,6 +300,7 @@ def main():
     st = load()
     threading.Thread(target=follow, args=(st,), daemon=True).start()
     threading.Thread(target=watch_repos, args=(st,), daemon=True).start()
+    threading.Thread(target=BOARD.run, daemon=True).start()
     print(f"{PLUGIN}: страница - 127.0.0.1:{PORT}, память - {HOME}", flush=True)
     http.server.ThreadingHTTPServer(("127.0.0.1", PORT), handler(st)).serve_forever()
 

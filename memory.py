@@ -10,7 +10,7 @@ import urllib.parse
 STAGES = ["Кандидат", "Разработка", "К релизу", "В сторе", "Пауза", "Готово"]
 # тип проекта: на доске по этапам - только приложения; без отметки - приложение (кандидаты от ресёрча попадают сами)
 KINDS = ["app", "site", "legal", "invite", "sandbox", "research", "other"]
-KEYS = {"project", "stage", "note", "goal", "next", "add", "done", "undone", "questions", "link", "unlink", "kind", "store", "figma"}
+KEYS = {"project", "stage", "note", "goal", "next", "add", "done", "undone", "questions", "link", "unlink", "kind", "store", "figma", "jira"}
 LIMIT = 2000   # пост в канал плагина - до 2000 знаков (core/reducer.py _ext_post)
 FIGMA_HOSTS = {"figma.com", "www.figma.com"}
 
@@ -27,6 +27,12 @@ def figma_ok(url):
         return False
     u = urllib.parse.urlsplit(url)
     return u.scheme == "https" and u.netloc.lower() in FIGMA_HOSTS and len(u.path.strip("/")) > 0
+
+
+def jira_ok(text):
+    """Привязка задач Jira к проекту: метки (myapp) и ключи эпиков (ABC-12); пусто - снять."""
+    toks = [t for t in re.split(r"[\s,]+", text.strip()) if t]
+    return len(text) <= 300 and len(toks) <= 20 and all(re.fullmatch(r"[\w.-]{1,60}", t) for t in toks)
 
 
 def parse(text, projects):
@@ -56,6 +62,10 @@ def parse(text, projects):
         if not isinstance(upd["figma"], str) or not figma_ok(upd["figma"].strip()):
             raise Invalid("figma - ссылка https://www.figma.com/… (design, file, board, proto, slides…) или пустая строка - снять")
         upd["figma"] = upd["figma"].strip()
+    if "jira" in upd:
+        if not isinstance(upd["jira"], str) or not jira_ok(upd["jira"]):
+            raise Invalid("jira - метки и эпики Jira через пробел или запятую (myapp ABC-12), пустая строка - снять")
+        upd["jira"] = " ".join(re.split(r"[\s,]+", upd["jira"].strip()))
     for k in ("add", "done", "undone"):
         if k in upd and not (isinstance(upd[k], list) and all(isinstance(x, str) and x.strip() for x in upd[k])):
             raise Invalid(f"{k} - список строк")
@@ -68,13 +78,13 @@ def parse(text, projects):
         if not all(x["text"] for x in upd["next"]):
             raise Invalid("пустой пункт в next")
     if len(upd) == 1:
-        raise Invalid("нечего менять: stage, note, goal, next, add, done, undone, questions, link, unlink, kind, store, figma")
+        raise Invalid("нечего менять: stage, note, goal, next, add, done, undone, questions, link, unlink, kind, store, figma, jira")
     return upd
 
 
 def empty():
     return {"stage": None, "kind": None, "note": "", "goal": "", "next": [], "questions": "", "links": [], "store": "",
-            "store_at": None, "figma": "", "updated": None, "by": None, "history": []}
+            "store_at": None, "figma": "", "jira": "", "updated": None, "by": None, "history": []}
 
 
 def _find(items, text):
@@ -98,6 +108,9 @@ def apply(mem, upd, by, ts):
     if "figma" in upd and upd["figma"] != (mem.get("figma") or ""):
         mem["figma"] = upd["figma"]
         what.append(f"Figma: {mem['figma']}" if mem["figma"] else "Figma снято")
+    if "jira" in upd and upd["jira"] != (mem.get("jira") or ""):
+        mem["jira"] = upd["jira"]
+        what.append(f"Jira: {mem['jira']}" if mem["jira"] else "Jira снято")
     for k, name in (("note", "пояснение этапа"), ("goal", "цель"), ("questions", "открытые вопросы")):
         if k in upd and upd[k].strip() != mem[k]:
             mem[k] = upd[k].strip()
@@ -146,6 +159,8 @@ def render_md(name, about, mem):
         out.append(f"Магазин ({at(mem['store_at'])}): {mem['store']}" if mem.get("store_at") else f"Магазин: {mem['store']}")
     if mem.get("figma"):
         out.append(f"Figma: {mem['figma']}")
+    if mem.get("jira"):
+        out.append(f"Jira (метки и эпики задач проекта): {mem['jira']}")
     out += ["", "## Цель", mem["goal"] or "(не заполнена)", "", "## Что дальше"]
     out += [f"- [{'x' if x['done'] else ' '}] {x['text']}" for x in mem["next"]] or ["(пусто)"]
     if mem["questions"]:

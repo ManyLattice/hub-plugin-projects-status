@@ -74,6 +74,7 @@ def state(root):
             "ahead": ahead(root, branch) if unpushed is not None else [],
             "head": {"hash": head[0], "subject": head[1], "ts": int(head[2])} if len(head) == 3 else None,
             "latest": int(branches[0]) if branches else None, "branches": len(branches),
+            "names": (git(root, "for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads") or "").split()[:300],
             "unpushed": int(unpushed) if unpushed and unpushed.isdigit() else None,
             "dirty": len((git(root, "status", "--porcelain") or "").splitlines()), "kind": kind, "web": url}
 

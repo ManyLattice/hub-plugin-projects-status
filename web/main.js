@@ -2,6 +2,7 @@
 // что без направления; карточка проекта - его память (этап, цель, что дальше, решения) и живые данные.
 // Данные - процесс плагина на порту «страница + 12»; правки памяти владельца - постом в канал плагина.
 import { figmaAbout, figmaHref, figmaMeta } from "./figma.js";
+import * as jira from "./jira.js";
 
 let hub = null;
 const el = (...a) => hub.el(...a);
@@ -11,9 +12,9 @@ const TYPES_ = [["app", "приложение"], ["site", "сайт"], ["legal",
   ["research", "ресёрч"], ["other", "другое"]];
 const KIND = { "Разработка": "work", "К релизу": "rel", "В сторе": "rel", "Пауза": "rest", "Готово": "ok" };
 const FILTERS = [["all", "Все"], ["dir", "С направлением"], ["wait", "Ждут вас"], ["push", "Не запушено"], ["nodir", "Без направления"]];
-const VIEWS = [["board", "Доска"], ["list", "Список"]], VIEW = `${PLUGIN}.view`;
+const VIEWS = [["board", "Доска"], ["list", "Список"], ["jira", "Jira"]], VIEW = `${PLUGIN}.view`;
 let view = "board";
-try { if (localStorage.getItem(VIEW) === "list") view = "list"; } catch { /* приватный режим: доска */ }
+try { const v = localStorage.getItem(VIEW); if (v === "list" || v === "jira") view = v; } catch { /* приватный режим: доска */ }
 // доска по этапам - только приложения (тип в памяти проекта; без отметки - приложение); в «Разработке» - лимит
 const COLUMNS = ["Кандидат", "Разработка", "К релизу", "В сторе"], FOLDED = ["Пауза", "Готово", "Без этапа"], WIP = { "Разработка": 1 };
 const folds = new Set();   // раскрытые «Пауза», «Готово», «Без этапа»: доска перерисовывается каждые 15 с
@@ -24,7 +25,7 @@ let tdlg = null, tmenu = null, tdel = null;   // окно задачи, меню
 const inputs = new Map();   // поле «написать проекту» по проекту ("" - главная): узел живёт между перерисовками
 let sent = null;
 const typing = () => [...inputs.values()].some((b) => b.node.contains(document.activeElement));
-const busy = () => editing || draft || tdlg || tdel || typing();
+const busy = () => editing || draft || tdlg || tdel || typing() || (view === "jira" && jira.busy());
 let rootRef = null;
 const chosen = new Map(), answered = new Map(), why = new Set(), own = new Set();   // ответы на карточки по request_id
 
@@ -38,6 +39,7 @@ async function load() {
   } catch (e) {
     error = `Процесс плагина не отвечает (${e.message}): hub restart ext:${PLUGIN}`;
   }
+  if (view === "jira" || open) jira.load();
   if (rootRef) draw(rootRef, hub.snapshot());
 }
 
@@ -338,11 +340,16 @@ function listView(snap) {
   const views = el("div", "pviews");
   for (const [k, t] of VIEWS) {
     const c = el("button", "pchip", t); c.type = "button"; c.setAttribute("aria-pressed", String(view === k));
-    c.addEventListener("click", () => { view = k; try { localStorage.setItem(VIEW, k); } catch { /* приватный режим */ } draw(rootRef, snap); });
+    c.addEventListener("click", () => {
+      view = k; try { localStorage.setItem(VIEW, k); } catch { /* приватный режим */ }
+      if (k === "jira") jira.load(); else jira.hide();
+      draw(rootRef, snap);
+    });
     views.append(c);
   }
   top.append(views);
   if (!draft) top.append(add);
+  if (view === "jira") return jira.page(snap, top, [...(error ? [el("p", "err", error)] : []), ...(draft ? [taskForm(snap, true)] : [])]);
   const onBoard = view === "board";
   const chips = el("div", "chips");
   const ups = data.projects.filter((p) => unpushedRepos(p).length);
@@ -618,11 +625,14 @@ function cardView(snap, p) {
   box.append(tabs);
   if (tab === "tasks") { box.append(...tasksView(snap, p)); return box; }
 
+  const jtop = jira.projectBlock(snap, p, "jpb-top");
+  if (jtop) box.append(jtop);
   const grid = el("div", "pc-grid");
   grid.append(memoryBox(snap, p, m, ls));
   const side = el("div", "wb");
   side.style.gap = "16px";
-  side.append(...workBox(snap, p), ...repoBox(p), ...boardBox(snap, p), doneBox(p, m), historyBox(m), linksBox(snap, p));
+  const jside = jira.projectBlock(snap, p, "jpb-side");
+  side.append(...workBox(snap, p), ...repoBox(p), ...(jside ? [jside] : []), ...boardBox(snap, p), doneBox(p, m), historyBox(m), linksBox(snap, p));
   grid.append(side);
   box.append(grid);
   return box;
@@ -645,7 +655,7 @@ function memoryBox(snap, p, m, ls) {
     const e = el("button", "btn-s", "Править"); e.type = "button";
     e.addEventListener("click", () => {
       editing = { stage: m.stage || null, kind: m.kind || "app", note: m.note || "", goal: m.goal || "", questions: m.questions || "",
-        figma: m.figma || "", next: (m.next || []).map((x) => x.text).join("\n") };
+        figma: m.figma || "", jira: m.jira || "", next: (m.next || []).map((x) => x.text).join("\n") };
       draw(rootRef, snap);
       rootRef.querySelector(".mem textarea, .mem input")?.focus();
     });
@@ -681,7 +691,9 @@ function memoryBox(snap, p, m, ls) {
     const fh = el("div", error ? "hint err" : "hint", error || figHint(editing.figma));
     fig.addEventListener("input", () => { fh.className = "hint"; fh.textContent = figHint(fig.value); });
     box.append(fld("Этап", seg, inp("note")), fld("Тип", kinds, el("div", "hint", "на доске по этапам - только приложения")),
-      fld("Figma", fig, fh), fld("Цель", inp("goal", 3)),
+      fld("Figma", fig, fh), fld("Jira", Object.assign(inp("jira"), { placeholder: "myapp ABC-12" }),
+        el("div", "hint", "метки и ключи эпиков задач Jira этого проекта: по ним вид «Jira» относит задачи к проекту")),
+      fld("Цель", inp("goal", 3)),
       fld("Что дальше", inp("next", 5), el("div", "hint", "по пункту в строке; отметки «сделано» сохраняются у тех же пунктов")),
       fld("Открытые вопросы", inp("questions", 2)));
   } else {
@@ -692,7 +704,9 @@ function memoryBox(snap, p, m, ls) {
     const fm = figmaMeta(m.figma), fv = el("div", "v figrow");
     if (fm) fv.append(figmaLink(m, "fname", fm.name || "Figma"), el("span", "kind", `· ${fm.kind}`));
     else fv.append(el("span", "fill", "Добавить ссылку"));
-    box.append(fld("Figma", fv), fld("Цель", fill(m.goal)));
+    box.append(fld("Figma", fv));
+    if (m.jira) box.append(fld("Jira", el("div", "v", m.jira)));
+    box.append(fld("Цель", fill(m.goal)));
     const ul = el("ul", "next");
     for (const x of m.next || []) {
       const li = rich("li", "tick" + (x.done ? " done" : ""), x.text);
@@ -1251,7 +1265,7 @@ async function submit(p, m) {
   const e = editing, upd = { project: p.name };
   if (e.stage && e.stage !== m.stage) upd.stage = e.stage;
   if (e.kind !== (m.kind || "app")) upd.kind = e.kind;
-  for (const k of ["note", "goal", "questions", "figma"]) if (e[k].trim() !== (m[k] || "")) upd[k] = e[k].trim();
+  for (const k of ["note", "goal", "questions", "figma", "jira"]) if (e[k].trim() !== (m[k] || "")) upd[k] = e[k].trim();
   if (upd.figma && !figmaHref(upd.figma)) { error = "Нужна ссылка https://www.figma.com/… или https://figma.com/…"; draw(rootRef, hub.snapshot()); return; }
   const lines = e.next.split("\n").map((x) => x.trim()).filter(Boolean);
   const old = m.next || [];
@@ -1284,16 +1298,33 @@ function draw(root, snap) {
   root.replaceChildren(page);
   seps.disconnect();
   for (const row of page.querySelectorAll(".seps")) seps.observe(row);
-  layer().replaceChildren(...(tdlg ? taskDialog(snap) : []), ...(tdel ? deleteDialog() : []));
+  const old = document.querySelector(".pst-layer .jp-body"), keep = old ? old.scrollTop : 0;
+  layer().replaceChildren(...(tdlg ? taskDialog(snap) : []), ...(tdel ? deleteDialog() : []), ...(!p && view === "jira" ? jira.layer(snap) : []));
+  const nw = document.querySelector(".pst-layer .jp-body");
+  if (nw && keep) nw.scrollTop = keep;
 }
 
 export default function register(h) {
   hub = h;
   hub.addStyle("web/projects.css");
+  hub.addStyle("web/jira.css");
+  jira.init({ hub, data: () => data, redraw: () => { if (rootRef) draw(rootRef, hub.snapshot()); }, askBox, rich, title, goSession, hubName, leads,
+    toBoard: (name, opts) => {
+      jira.toBoard(name, opts); open = null; editing = draft = null; view = "jira";
+      try { localStorage.setItem(VIEW, "jira"); } catch { /* приватный режим */ }
+      draw(rootRef, hub.snapshot()); rootRef.scrollTop = 0;
+    },
+    editJira: (p) => {
+      const m = p.memory || {};
+      editing = { stage: m.stage || null, kind: m.kind || "app", note: m.note || "", goal: m.goal || "", questions: m.questions || "",
+        figma: m.figma || "", jira: m.jira || "", next: (m.next || []).map((x) => x.text).join("\n") };
+      draw(rootRef, hub.snapshot());
+      rootRef.querySelector(".mem input[placeholder='myapp ABC-12']")?.focus();
+    } });
   hub.addView({
     id: PLUGIN, title: "Статус проектов", subtitle: "этап, бэклог и память проектов", icon: "board",
     render(root, snap) { rootRef = root; if (!busy()) draw(root, snap); },
     show(root) { rootRef = root; load(); timer = setInterval(() => { if (!busy()) load(); }, 15000); },
-    hide() { clearInterval(timer); timer = null; seps.disconnect(); tdlg = tdel = tmenu = null; document.querySelector(".pst-layer")?.remove(); },
+    hide() { clearInterval(timer); timer = null; seps.disconnect(); tdlg = tdel = tmenu = null; jira.hide(); document.querySelector(".pst-layer")?.remove(); },
   });
 }
