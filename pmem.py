@@ -32,11 +32,24 @@ import memory  # noqa: E402
 import tasks  # noqa: E402
 
 
+def find_hub_code(env=os.environ, which=shutil.which, home=os.path.expanduser("~")):
+    """Папка кода хаба: HUB_CODE, <HUB_STATE_DIR>/code, папка над bin/hub из PATH, ~/.hub-core/code.
+    На пакете hub в PATH - обёртка-скрипт, код лежит в <state>/code."""
+    places = [env.get("HUB_CODE")]
+    if env.get("HUB_STATE_DIR"):
+        places.append(os.path.join(env["HUB_STATE_DIR"], "code"))
+    exe = which("hub")
+    if exe:
+        places.append(os.path.dirname(os.path.dirname(os.path.realpath(exe))))
+    places.append(os.path.join(home, ".hub-core", "code"))
+    return next((p for p in places if p and os.path.isfile(os.path.join(p, "core", "daemon.py"))), None)
+
+
 def hub_code():
-    exe = shutil.which("hub")
-    if not exe:
-        sys.exit("нет команды hub в PATH")
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(exe))))
+    code = find_hub_code()
+    if not code:
+        sys.exit("не нашёл код хаба (core/daemon.py): задай HUB_CODE или HUB_STATE_DIR, либо hub в PATH")
+    sys.path.insert(0, code)
 
 
 def state_dir():
